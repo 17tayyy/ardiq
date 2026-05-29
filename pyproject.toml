@@ -1,0 +1,16 @@
+[project]
+name = "ardiq"
+version = "0.1.0"
+description = "ArdiQ"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "core/Cargo.toml"
+module-name = "ardiq._core"
+features = ["pyo3/abi3-py39"]
+python-source = "."
