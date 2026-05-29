@@ -3,7 +3,9 @@ name = "ardiq"
 version = "0.1.0"
 description = "ArdiQ"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "msgpack>=1.1.2",
+]
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
@@ -14,3 +16,35 @@ manifest-path = "core/Cargo.toml"
 module-name = "ardiq._core"
 features = ["pyo3/abi3-py39"]
 python-source = "."
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[dependency-groups]
+dev = [
+    "redis>=8.0.0",
+    "ruff>=0.15.15",
+    "ty>=0.0.40",
+]

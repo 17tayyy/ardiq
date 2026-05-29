@@ -9,3 +9,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "signal", "macros"] }
+tokio-util = { version = "0.7" }
+async-channel = "2"
+redis = { version = "1", features = ["tokio-comp", "connection-manager", "streams", "script", "aio"] }
+async-trait = "0.1"
+tracing = "0.1"

@@ -1,0 +1,23 @@
+"""Type stubs for the Rust extension `ardiq._core`."""
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+Executor = Callable[[str, bytes, int], Awaitable[tuple[int, bytes, int]]]
+
+class ArdiqCore:
+    def __init__(self, config: dict[str, Any]) -> None: ...
+    @property
+    def worker_id(self) -> str: ...
+    def enqueue(
+        self,
+        task_id: str,
+        payload: bytes,
+        priority: str | None = None,
+        delay_ms: int = 0,
+        schedule_ms: int = 0,
+        expire_ms: int = 0,
+    ) -> Awaitable[bool]: ...
+    def run(self, callback: Executor) -> Awaitable[None]: ...
+    def stop(self) -> None: ...
+    def queue_size(self) -> Awaitable[int]: ...
