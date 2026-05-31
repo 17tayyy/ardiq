@@ -1,29 +1,3 @@
-//! PyO3 bridge for ArdiQ.
-//!
-//! The Rust core owns the loop and all Redis I/O; Python owns task definitions,
-//! the wire format (msgpack), and execution of the actual functions. They meet
-//! here: [`ArdiqCore::run`] starts the Rust worker and hands each ready task to
-//! a Python callback (the async executor) via `pyo3-async-runtimes`.
-//!
-//! ## Python-facing contract
-//!
-//! ```python
-//! core = ArdiqCore({"redis_url": ..., "queue_name": ..., "concurrency": 16, ...})
-//!
-//! # client side
-//! await core.enqueue(task_id, payload_bytes, priority=None,
-//!                    delay_ms=0, schedule_ms=0, expire_ms=0)
-//! await core.result(task_id)  # stored result bytes, or None
-//! await core.status(task_id)  # "complete" | "running" | "queued" | "not_found"
-//!
-//! # worker side: `execute` runs the registered fn and returns
-//! #   (outcome, result_bytes, retry_after_ms)
-//! #     outcome: 0 = success, 1 = terminal failure, 2 = retry
-//! #     retry_after_ms: explicit backoff for outcome 2 (0 = use default)
-//! async def execute(task_id: str, payload: bytes, tries: int): ...
-//! await core.run(execute)   # blocks until core.stop()
-//! ```
-
 mod queue;
 mod worker;
 
@@ -42,7 +16,6 @@ use tokio_util::sync::CancellationToken;
 use crate::queue::{now_ms, Queue};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
-/// Bridges the Rust worker to a Python async callback.
 struct PyExecutor {
     callback: Py<PyAny>,
     locals: TaskLocals,
@@ -51,7 +24,6 @@ struct PyExecutor {
 #[async_trait::async_trait]
 impl TaskExecutor for PyExecutor {
     async fn execute(&self, task_id: String, payload: Vec<u8>, tries: i64) -> ExecOutcome {
-        // GIL held only to build the coroutine + bridge it into a Rust future.
         let future = Python::attach(|py| -> PyResult<_> {
             let bytes = PyBytes::new(py, &payload);
             let coro = self.callback.bind(py).call1((task_id, bytes, tries))?;
@@ -65,7 +37,6 @@ impl TaskExecutor for PyExecutor {
             }
         };
 
-        // Awaited without the GIL; reacquired only to read the result tuple.
         match future.await {
             Ok(obj) => Python::attach(|py| parse_outcome(py, &obj)).unwrap_or_else(|err| {
                 tracing::error!("ardiq executor returned an unreadable result: {err}");
@@ -79,7 +50,6 @@ impl TaskExecutor for PyExecutor {
     }
 }
 
-/// Read the `(outcome, result_bytes, retry_after_ms)` tuple returned by Python.
 fn parse_outcome(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ExecOutcome> {
     let bound = obj.bind(py);
     let code: i64 = bound.get_item(0)?.extract()?;
@@ -102,14 +72,12 @@ fn failure() -> ExecOutcome {
     }
 }
 
-/// Handle held by Python: owns the Redis client, key layout and worker config.
 #[pyclass]
 struct ArdiqCore {
     client: redis::Client,
     queue: Arc<Queue>,
     config: WorkerConfig,
     cancel: CancellationToken,
-    // Lazily-created shared connection for client-side ops (enqueue, size).
     conn: Arc<OnceCell<ConnectionManager>>,
 }
 
@@ -125,7 +93,6 @@ impl ArdiqCore {
             .map(|v| v.extract())
             .transpose()?
             .unwrap_or_else(|| "default".to_string());
-        // Python passes priorities lowest-first; the Queue wants highest-first.
         let mut priorities: Vec<String> = opt(&config, "priorities")?
             .map(|v| v.extract())
             .transpose()?
@@ -183,9 +150,6 @@ impl ArdiqCore {
         })
     }
 
-    /// Enqueue a task. `score`-style timing is split into `delay_ms` (relative)
-    /// and `schedule_ms` (absolute epoch ms); `0` means run immediately.
-    /// Returns `False` if a task with the same id already existed.
     #[pyo3(signature = (task_id, payload, priority=None, delay_ms=0, schedule_ms=0, expire_ms=0))]
     fn enqueue<'py>(
         &self,
@@ -220,8 +184,6 @@ impl ArdiqCore {
         })
     }
 
-    /// Start the loop; resolves when the worker stops. `callback` is the async
-    /// executor from the module docs.
     fn run<'py>(&self, py: Python<'py>, callback: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let locals = TaskLocals::with_running_loop(py)?.copy_context(py)?;
         let executor = Arc::new(PyExecutor { callback, locals });
@@ -238,9 +200,19 @@ impl ArdiqCore {
         })
     }
 
-    /// Graceful shutdown: consumers finish their current task, then exit.
     fn stop(&self) {
         self.cancel.cancel();
+    }
+
+    /// Burst can be toggled before `run` (e.g. from the CLI `--burst` flag).
+    #[getter]
+    fn burst(&self) -> bool {
+        self.config.burst
+    }
+
+    #[setter]
+    fn set_burst(&mut self, value: bool) {
+        self.config.burst = value;
     }
 
     fn queue_size<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -254,7 +226,6 @@ impl ArdiqCore {
         })
     }
 
-    /// Stored result bytes, or `None` if absent/expired.
     fn result<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
         let queue = self.queue.clone();
         let conn = self.conn.clone();
@@ -271,7 +242,6 @@ impl ArdiqCore {
         })
     }
 
-    /// Lifecycle of a task: "complete" | "running" | "queued" | "not_found".
     fn status<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
         let queue = self.queue.clone();
         let conn = self.conn.clone();
@@ -300,7 +270,6 @@ async fn shared_conn(
     Ok(conn.clone())
 }
 
-/// Config lookup that treats an explicit `None` as absent.
 fn opt<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(dict.get_item(key)?.filter(|value| !value.is_none()))
 }

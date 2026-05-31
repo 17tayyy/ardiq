@@ -9,6 +9,7 @@ class ArdiqCore:
     def __init__(self, config: dict[str, Any]) -> None: ...
     @property
     def worker_id(self) -> str: ...
+    burst: bool
     def enqueue(
         self,
         task_id: str,

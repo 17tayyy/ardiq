@@ -1,11 +1,32 @@
 [project]
 name = "ardiq"
 version = "0.1.0"
-description = "ArdiQ"
+description = "A fast distributed task queue with a Rust core and a Python API, backed by Redis streams."
+readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "17tayyy", email = "oscarfdst@proton.me" }]
+keywords = ["task-queue", "redis", "rust", "async", "asyncio", "distributed", "jobs", "worker"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Framework :: AsyncIO",
+    "Topic :: System :: Distributed Computing",
+    "Operating System :: POSIX :: Linux",
+]
 dependencies = [
     "msgpack>=1.1.2",
+    "typer>=0.26.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/17tayyy/ardiq"
+
+[project.scripts]
+ardiq = "ardiq.cli:main"
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]

@@ -17,4 +17,11 @@ dist/
 .uv/
 
 # OS
+
+
 .DS_Store
+ROADMAP.md
+.claude
+.vscode
+.ruff_cache
+.pytest_cache

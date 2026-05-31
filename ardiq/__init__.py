@@ -41,6 +41,7 @@ class _Registered:
     fn: Callable[..., Any]
     max_retries: int
     backoff_ms: int
+    is_async: bool
 
 
 # name -> registered fn + retry policy. Populated by `register` / `@app.task`.
@@ -55,7 +56,8 @@ def register(
     backoff_ms: int = 0,
 ) -> None:
     """Low-level registration. Defaults to no retries; `@app.task` adds them."""
-    REGISTRY[name] = _Registered(fn, max_retries, backoff_ms)
+    is_async = asyncio.iscoroutinefunction(fn)
+    REGISTRY[name] = _Registered(fn, max_retries, backoff_ms, is_async)
 
 
 def pack_task(
@@ -82,9 +84,11 @@ async def execute(task_id: str, payload: bytes, tries: int) -> tuple[int, bytes,
         return FAILURE, _envelope(False, f"unknown task {data['f']!r}", tries), 0
 
     try:
-        result = reg.fn(*data["a"], **data["k"])
-        if asyncio.iscoroutine(result):
-            result = await result
+        if reg.is_async:
+            result = await reg.fn(*data["a"], **data["k"])
+        else:
+            # Run blocking sync tasks off the event loop so they don't stall it.
+            result = await asyncio.to_thread(reg.fn, *data["a"], **data["k"])
     except Exception as exc:
         if tries <= reg.max_retries:
             return RETRY, b"", reg.backoff_ms  # 0 = core's default backoff
@@ -199,6 +203,14 @@ class Ardiq:
     @property
     def worker_id(self) -> str:
         return self._core.worker_id
+
+    @property
+    def burst(self) -> bool:
+        return self._core.burst
+
+    @burst.setter
+    def burst(self, value: bool) -> None:
+        self._core.burst = value
 
     def task(
         self,

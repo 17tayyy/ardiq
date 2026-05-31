@@ -1,8 +1,3 @@
-//! Redis-facing layer: pure Rust, no PyO3. Payloads are opaque bytes (msgpack
-//! from the Python client), so the wire format stays owned by Python. Data
-//! model mirrors streaq: a stream + consumer group per priority for delivery,
-//! a sorted set per priority for delayed tasks.
-
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -24,7 +19,6 @@ pub struct StreamMessage {
     pub message_id: String,
     pub task_id: String,
     pub priority: String,
-    // Carried for forthcoming schedule-drift checks; unused on the core path.
     #[allow(dead_code)]
     pub enqueue_time: i64,
 }
@@ -37,7 +31,6 @@ pub enum ResultTtl {
 }
 
 impl ResultTtl {
-    // PyO3-boundary encoding: 0 = drop, negative = forever, positive = ms.
     pub fn from_ms(ms: i64) -> Self {
         match ms {
             0 => ResultTtl::None,
@@ -47,8 +40,6 @@ impl ResultTtl {
     }
 }
 
-/// Owns the Redis key layout and atomic ops for one named queue. `priorities`
-/// is ordered highest-first (read first); the last entry is the enqueue default.
 pub struct Queue {
     priorities: Vec<String>,
     prefix: String,
@@ -127,7 +118,6 @@ impl Queue {
         Ok(())
     }
 
-    /// Returns `false` if a task with the same id already existed.
     #[allow(clippy::too_many_arguments)]
     pub async fn enqueue<C: ConnectionLike>(
         &self,
@@ -154,7 +144,6 @@ impl Queue {
         Ok(queued == 1)
     }
 
-    /// Atomic per priority so concurrent workers can't double-publish.
     pub async fn publish_delayed<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -173,9 +162,7 @@ impl Queue {
         Ok(moved)
     }
 
-    /// Priority-ordered, non-blocking. Per priority: first reclaim idle messages
-    /// abandoned by crashed workers (XAUTOCLAIM), then take fresh ones, until
-    /// `count` is satisfied.
+
     pub async fn read_batch<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -235,8 +222,6 @@ impl Queue {
         Ok(out)
     }
 
-    /// One blocking read across all priorities, used when `read_batch` was empty
-    /// so we don't busy-poll.
     pub async fn read_blocking<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -313,8 +298,6 @@ impl Queue {
             .await
     }
 
-    /// Success or terminal failure: ack + delete the entry, drop bookkeeping
-    /// keys, optionally store the result.
     pub async fn complete<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -360,8 +343,6 @@ impl Queue {
         pipe.query_async(conn).await
     }
 
-    /// Requeue for a later attempt: payload + retry counter are kept so the next
-    /// run resumes the same task.
     pub async fn retry_later<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -382,7 +363,6 @@ impl Queue {
         pipe.query_async(conn).await
     }
 
-    /// Drop a task that can't run (e.g. payload expired): ack + clean up, no result.
     pub async fn discard<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -398,8 +378,6 @@ impl Queue {
         pipe.query_async(conn).await
     }
 
-    /// Refresh health and re-assert ownership of in-flight messages (XCLAIM) so
-    /// other workers don't reclaim them mid-run. `in_flight`: priority -> entry ids.
     pub async fn heartbeat<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -450,7 +428,6 @@ impl Queue {
         Ok(counts.iter().sum())
     }
 
-    /// Stored result envelope (opaque bytes), or `None` if absent/expired.
     pub async fn fetch_result<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -462,8 +439,6 @@ impl Queue {
             .await
     }
 
-    /// Lifecycle, result-first so a just-finished task reads `complete`:
-    /// complete | running | queued | not_found.
     pub async fn status<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -496,6 +471,4 @@ fn parse_entry(priority: &str, entry: &redis::streams::StreamId) -> Option<Strea
     })
 }
 
-// Far-future score for never-expiring results, so the cleanup ZSET still has a
-// (very distant) deadline for them.
 const FAR_FUTURE_MS: i64 = 100_000_000_000;
