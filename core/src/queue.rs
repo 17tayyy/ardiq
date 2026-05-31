@@ -449,6 +449,42 @@ impl Queue {
         let counts: Vec<i64> = pipe.query_async(conn).await?;
         Ok(counts.iter().sum())
     }
+
+    /// Stored result envelope (opaque bytes), or `None` if absent/expired.
+    pub async fn fetch_result<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<Option<Vec<u8>>> {
+        redis::cmd("GET")
+            .arg(self.result_key(task_id))
+            .query_async(conn)
+            .await
+    }
+
+    /// Lifecycle, result-first so a just-finished task reads `complete`:
+    /// complete | running | queued | not_found.
+    pub async fn status<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<&'static str> {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.cmd("EXISTS").arg(self.result_key(task_id));
+        pipe.cmd("SISMEMBER").arg(self.running_set()).arg(task_id);
+        pipe.cmd("EXISTS").arg(self.task_key(task_id));
+        let (has_result, running, has_data): (i64, i64, i64) = pipe.query_async(conn).await?;
+        Ok(if has_result == 1 {
+            "complete"
+        } else if running == 1 {
+            "running"
+        } else if has_data == 1 {
+            "queued"
+        } else {
+            "not_found"
+        })
+    }
 }
 
 fn parse_entry(priority: &str, entry: &redis::streams::StreamId) -> Option<StreamMessage> {

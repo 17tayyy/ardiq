@@ -13,6 +13,8 @@
 //! # client side
 //! await core.enqueue(task_id, payload_bytes, priority=None,
 //!                    delay_ms=0, schedule_ms=0, expire_ms=0)
+//! await core.result(task_id)  # stored result bytes, or None
+//! await core.status(task_id)  # "complete" | "running" | "queued" | "not_found"
 //!
 //! # worker side: `execute` runs the registered fn and returns
 //! #   (outcome, result_bytes, retry_after_ms)
@@ -249,6 +251,35 @@ impl ArdiqCore {
             let mut conn = shared_conn(&conn, &client).await?;
             let size = queue.queue_size(&mut conn).await.map_err(to_py_err)?;
             Ok(size)
+        })
+    }
+
+    /// Stored result bytes, or `None` if absent/expired.
+    fn result<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let raw = queue.fetch_result(&mut conn, &task_id).await.map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                Ok(match raw {
+                    Some(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
+                    None => py.None(),
+                })
+            })
+        })
+    }
+
+    /// Lifecycle of a task: "complete" | "running" | "queued" | "not_found".
+    fn status<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let status = queue.status(&mut conn, &task_id).await.map_err(to_py_err)?;
+            Ok(status.to_string())
         })
     }
 

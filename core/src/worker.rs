@@ -179,10 +179,14 @@ impl Worker {
                 }
             }
 
-            self.queue.publish_delayed(&mut conn, now_ms()).await?;
+            let promoted = self.queue.publish_delayed(&mut conn, now_ms()).await?;
 
+            // Burst exits only when nothing is ready: no fresh reads, nothing
+            // just promoted from the delayed ZSET, and nothing still in flight.
+            // It does not wait for not-yet-due delayed tasks.
             if self.config.burst
                 && messages.is_empty()
+                && promoted == 0
                 && state.permits.load(Ordering::Acquire) >= self.config.prefetch
             {
                 self.cancel.cancel();
