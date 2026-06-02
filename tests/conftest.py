@@ -6,7 +6,7 @@ import time
 import pytest
 import redis.asyncio as aioredis
 
-from ardiq import REGISTRY, Ardiq, ArdiqCore
+from ardiq import Ardiq, ArdiqCore
 
 REDIS_URL = "redis://localhost:6379/15"  # isolated DB
 
@@ -19,7 +19,6 @@ async def redis():
     except Exception:
         pytest.skip("Redis not available on localhost:6379")
     await client.flushdb()
-    REGISTRY.clear()
     yield client
     await client.aclose()
 

@@ -67,10 +67,10 @@ from example import add
 
 
 async def main():
-    job = await add.enqueue(2, 3)     # returns a Job handle
+    job = await add.enqueue(2, 3)        # returns a Job handle
     print(job.id)
-    print(await job.status())         # 'queued' | 'running' | 'complete'
-    print(await job.result())         # TaskResult(success=True, value=5, tries=1)
+    print(await job.status())            # 'queued' | 'running' | 'complete'
+    print(await job.result(timeout=5))   # waits → TaskResult(success=True, value=5, tries=1)
 
 
 asyncio.run(main())
@@ -93,8 +93,9 @@ few tasks and processes them in burst mode.
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed |
 | `result_ttl_ms` | `300000` | How long results live (`0` drops, negative keeps forever) |
 | `burst` | `False` | Exit once the queue drains |
+| `serializer` / `deserializer` | msgpack | Wire codec; pass `pickle.dumps`/`pickle.loads` to send datetimes/objects |
 
-`@app.task(...)` accepts `name`, `max_retries` (default 3), `backoff_ms`, and `priority`.
+`@app.task(...)` accepts `name`, `max_retries` (default 3), `backoff_ms`, `timeout` (seconds), and `priority`.
 Use `task.options(delay_ms=…, schedule_ms=…, priority=…, task_id=…).enqueue(...)` for one-off overrides.
 
 ## Development

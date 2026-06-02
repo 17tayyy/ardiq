@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from ardiq import REGISTRY
+from ardiq._core import init_logging
 
 if TYPE_CHECKING:
     from ardiq import Ardiq
@@ -49,7 +49,7 @@ async def serve(app: Ardiq, burst: bool) -> None:
     logger.info(
         "starting worker %s for %d task(s)%s",
         app.worker_id,
-        len(REGISTRY),
+        len(app.tasks),
         " [burst]" if burst else "",
     )
     try:
@@ -73,6 +73,7 @@ def run(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    init_logging(verbose)  # surface the Rust core's logs too
     worker = import_string(app)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve(worker, burst))

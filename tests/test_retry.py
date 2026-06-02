@@ -6,26 +6,34 @@ import time
 import msgpack
 import pytest
 
-from ardiq import RETRY, SUCCESS, execute, pack_task, register, unpack_result
+from ardiq import ArdiqCore
 
 
-def _boom() -> int:
-    raise ValueError("boom")
+async def test_terminal_failure(redis, make_app):
+    app = make_app("retry_fail", burst=True, concurrency=2, poll_block_ms=100)
 
+    @app.task(max_retries=0)
+    def boom():
+        raise ValueError("boom")
 
-async def test_terminal_failure(redis, make_core):
-    register("boom", _boom)  # default max_retries=0 → terminal
-    core = make_core("retry_fail", burst=True, concurrency=2, poll_block_ms=100)
-    await core.enqueue("fail-1", pack_task("boom"))
-    await asyncio.wait_for(core.run(execute), timeout=15)
+    j = await boom.enqueue()
+    await asyncio.wait_for(app.run(), timeout=15)
 
-    res = unpack_result(await core.result("fail-1"))
+    res = await j.result()
     assert res is not None and res.success is False and "boom" in str(res.value)
+
+    task_id = j.id
     cleaned = await redis.exists(
-        "ardiq:retry_fail:task:data:fail-1", "ardiq:retry_fail:task:retry:fail-1"
+        f"ardiq:retry_fail:task:data:{task_id}",
+        f"ardiq:retry_fail:task:retry:{task_id}",
     )
     assert cleaned == 0
-    assert not await redis.sismember("ardiq:retry_fail:index:running", "fail-1")
+    assert not await redis.sismember("ardiq:retry_fail:index:running", task_id)
+
+
+# These two cases test the raw core retry mechanism with a custom executor
+# (outcome 2 directly), so they still use ArdiqCore directly.
+RETRY, SUCCESS = 1, 0
 
 
 @pytest.mark.parametrize(
@@ -40,11 +48,12 @@ async def test_retry_mechanism(redis, make_core, poll, retry_after_ms, min_gap, 
         stamps.append(time.monotonic())
         tries_seen.append(tries)
         if len(tries_seen) < 2:
-            return RETRY, b"", retry_after_ms
-        return SUCCESS, msgpack.packb({"attempts": len(tries_seen)}), 0
+            return 2, b"", retry_after_ms  # outcome 2 = RETRY
+        return 0, msgpack.packb({"attempts": len(tries_seen)}), 0  # outcome 0 = SUCCESS
 
-    core = make_core("retry_run", concurrency=2, poll_block_ms=50)
-    await core.enqueue("rt-1", pack_task("noop"))
+    core: ArdiqCore = make_core("retry_run", concurrency=2, poll_block_ms=50)
+    payload = msgpack.packb({"f": "noop", "a": [], "k": {}, "t": 0})
+    await core.enqueue("rt-1", payload)
 
     run = asyncio.ensure_future(core.run(executor))  # pyo3 future, not a coroutine
     try:
