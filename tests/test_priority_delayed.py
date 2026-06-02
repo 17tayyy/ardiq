@@ -47,8 +47,8 @@ async def test_delayed_and_scheduled(redis, make_app, poll):
     now_ms = int(time.time() * 1000)
     d_job = await stamp.options(delay_ms=300).enqueue("delay")
     s_job = await stamp.options(schedule_ms=now_ms + 300).enqueue("sched")
-    assert await d_job.status() == "queued"
-    assert await s_job.status() == "queued"
+    assert await d_job.status() == "scheduled"
+    assert await s_job.status() == "scheduled"
 
     run = asyncio.ensure_future(app.run())
     try:
