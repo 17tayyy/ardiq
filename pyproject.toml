@@ -37,6 +37,7 @@ manifest-path = "core/Cargo.toml"
 module-name = "ardiq._core"
 features = ["pyo3/abi3-py39"]
 python-source = "."
+include = ["ardiq/py.typed"]
 
 [tool.ruff]
 line-length = 88

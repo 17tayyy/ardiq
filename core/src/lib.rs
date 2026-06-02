@@ -204,7 +204,6 @@ impl ArdiqCore {
         self.cancel.cancel();
     }
 
-    /// Burst can be toggled before `run` (e.g. from the CLI `--burst` flag).
     #[getter]
     fn burst(&self) -> bool {
         self.config.burst
@@ -253,6 +252,25 @@ impl ArdiqCore {
         })
     }
 
+    /// `(payload_bytes | None, tries, scheduled_at_ms)` for an unfinished task.
+    fn task_info<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let (payload, tries, scheduled) =
+                queue.fetch_info(&mut conn, &task_id).await.map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<(Py<PyAny>, i64, i64)> {
+                let payload = match payload {
+                    Some(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
+                    None => py.None(),
+                };
+                Ok((payload, tries, scheduled))
+            })
+        })
+    }
+
     #[getter]
     fn worker_id(&self) -> &str {
         &self.config.worker_id
@@ -286,8 +304,26 @@ fn to_py_err<E: std::fmt::Display>(err: E) -> PyErr {
     PyRuntimeError::new_err(err.to_string())
 }
 
+/// Install a tracing subscriber that forwards Rust logs to stderr.
+/// Level: DEBUG when verbose=True, else INFO. Safe to call multiple times
+/// (subsequent calls are no-ops once a global subscriber is set).
+#[pyfunction]
+fn init_logging(verbose: bool) {
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::EnvFilter;
+
+    let level = if verbose { "debug" } else { "info" };
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(level));
+    let _ = fmt::Subscriber::builder()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init(); // no-op if already initialized
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArdiqCore>()?;
+    m.add_function(wrap_pyfunction!(init_logging, m)?)?;
     Ok(())
 }

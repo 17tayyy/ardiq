@@ -72,9 +72,6 @@ impl Worker {
     }
 
     pub async fn run(&self) -> redis::RedisResult<()> {
-        // The producer's blocking reads (XREADGROUP BLOCK) need no response
-        // timeout, or redis's default 500ms one desyncs the connection once the
-        // block reaches 500ms.
         let producer_cfg = redis::AsyncConnectionConfig::new().set_response_timeout(None);
         let mut producer_conn = self
             .client

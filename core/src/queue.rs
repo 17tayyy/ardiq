@@ -450,15 +450,60 @@ impl Queue {
         pipe.cmd("SISMEMBER").arg(self.running_set()).arg(task_id);
         pipe.cmd("EXISTS").arg(self.task_key(task_id));
         let (has_result, running, has_data): (i64, i64, i64) = pipe.query_async(conn).await?;
-        Ok(if has_result == 1 {
-            "complete"
-        } else if running == 1 {
-            "running"
-        } else if has_data == 1 {
-            "queued"
+        if has_result == 1 {
+            return Ok("complete");
+        }
+        if running == 1 {
+            return Ok("running");
+        }
+        if has_data == 0 {
+            return Ok("not_found");
+        }
+        // Has data and isn't running: in a delayed ZSET = scheduled, else queued.
+        if self.scheduled_at(conn, task_id).await?.is_some() {
+            Ok("scheduled")
         } else {
-            "not_found"
-        })
+            Ok("queued")
+        }
+    }
+
+    /// Fire time (epoch ms) if the task is waiting in a delayed ZSET.
+    async fn scheduled_at<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<Option<i64>> {
+        for priority in &self.priorities {
+            let score: Option<f64> = redis::cmd("ZSCORE")
+                .arg(self.delayed_key(priority))
+                .arg(task_id)
+                .query_async(conn)
+                .await?;
+            if let Some(score) = score {
+                return Ok(Some(score as i64));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Introspection for an unfinished task: (payload, tries, scheduled-at ms).
+    /// `payload` is `None` once the task completes (its data is dropped).
+    pub async fn fetch_info<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<(Option<Vec<u8>>, i64, i64)> {
+        let payload: Option<Vec<u8>> = redis::cmd("GET")
+            .arg(self.task_key(task_id))
+            .query_async(conn)
+            .await?;
+        let tries: i64 = redis::cmd("GET")
+            .arg(self.retry_key(task_id))
+            .query_async::<Option<i64>>(conn)
+            .await?
+            .unwrap_or(0);
+        let scheduled = self.scheduled_at(conn, task_id).await?.unwrap_or(0);
+        Ok((payload, tries, scheduled))
     }
 }
 
