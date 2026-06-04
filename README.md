@@ -4,8 +4,6 @@ A fast distributed task queue with a **Rust core** and a clean **Python API**, b
 
 ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs) + [tokio](https://tokio.rs)); you write tasks in plain Python. The two meet at a single async callback, with the GIL held only for the microseconds it takes to start a task and read its result — so a single process handles high concurrency.
 
-> **Early stage.** The engine is solid — priorities, retries with backoff, delayed/scheduled tasks, crash recovery, result storage — but the ergonomics layer is still growing.
-
 ## Features
 
 - 🦀 **Rust core** — the loop and Redis I/O run on tokio, off the GIL
@@ -19,12 +17,8 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 
 ## Installation
 
-ArdiQ isn't on PyPI yet. Build it from source — you'll need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/):
-
 ```console
-$ git clone https://github.com/17tayyy/ardiq
-$ cd ardiq
-$ uv sync            # builds the Rust extension and installs dependencies
+$ pip install ardiq
 ```
 
 You also need a Redis server. For local development:
@@ -32,6 +26,8 @@ You also need a Redis server. For local development:
 ```console
 $ docker compose up -d
 ```
+
+> **Building from source** (if you want to hack on ArdiQ itself): you'll need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/). Clone the repo and run `uv sync`.
 
 ## Quickstart
 
