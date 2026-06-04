@@ -1,10 +1,10 @@
 [project]
 name = "ardiq"
-version = "0.1.0"
+version = "0.1.1"
 description = "A fast distributed task queue with a Rust core and a Python API, backed by Redis streams."
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 authors = [{ name = "17tayyy", email = "oscarfdst@proton.me" }]
 keywords = ["task-queue", "redis", "rust", "async", "asyncio", "distributed", "jobs", "worker"]
 classifiers = [
