@@ -1,5 +1,10 @@
 # ArdiQ
 
+[![PyPI version](https://img.shields.io/pypi/v/ardiq.svg)](https://pypi.org/project/ardiq/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ardiq.svg)](https://pypi.org/project/ardiq/)
+[![CI](https://github.com/17tayyy/ardiq/actions/workflows/ci.yml/badge.svg)](https://github.com/17tayyy/ardiq/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/17tayyy/ardiq.svg)](https://github.com/17tayyy/ardiq/blob/main/LICENSE)
+
 A fast distributed task queue with a **Rust core** and a clean **Python API**, backed by Redis streams.
 
 ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs) + [tokio](https://tokio.rs)); you write tasks in plain Python. The two meet at a single async callback, with the GIL held only for the microseconds it takes to start a task and read its result — so a single process handles high concurrency.
@@ -43,6 +48,31 @@ same machine (1,000 tasks, one worker, 10 concurrent):
 > work for *every* Python queue (ArdiQ included). The full, reproducible suite —
 > with the honest caveats — lives in the
 > [benchmark repo](https://github.com/17tayyy/python-task-queue-benchmarks).
+
+## When to use ArdiQ
+
+**Reach for ArdiQ when you want:**
+
+- **High concurrency on a small footprint** — async-native, with the loop and
+  Redis I/O in Rust, so one process does a lot without eating memory.
+- **A modern, typed API** — `@app.task`, awaitable enqueue, `Job` handles,
+  results and status built in.
+- **Reliability out of the box** — priorities, retries with backoff, delayed and
+  scheduled tasks, and crash recovery via Redis consumer groups.
+- **Redis you already run** — no extra broker to operate.
+
+**Consider the alternatives when:**
+
+- **You need to saturate many CPU cores in one process** — like *every*
+  single-process Python queue, ArdiQ runs your task body under the GIL, so
+  CPU-bound work is serial per worker (scale out with more workers). For heavy
+  CPU fan-out, a prefork model (Celery, Dramatiq) can be simpler.
+- **You need a large, battle-tested ecosystem today** — Celery has years of
+  integrations, schedulers, and dashboards. ArdiQ is young and moving fast.
+- **You can't run Redis** — ArdiQ is Redis-only by design.
+
+ArdiQ sits alongside **arq / Taskiq / Streaq** as a modern async queue — its edge
+is the Rust core (memory and per-task overhead) and a batteries-included API.
 
 ## Installation
 
