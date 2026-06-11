@@ -1,0 +1,75 @@
+---
+title: ArdiQ — fast Python task queue with a Rust core
+description: A fast distributed task queue with a Rust core and a clean Python API, backed by Redis streams.
+template: splash
+---
+
+import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import logoLight from '../../assets/ardiq-logo.png';
+import logoDark from '../../assets/ardiq-logo-dark.png';
+
+<div class="landing-hero">
+	<h1 id="_top" class="sr-only">ArdiQ</h1>
+	<Image src={logoLight} alt="ArdiQ" class="landing-logo dark:sl-hidden" loading="eager" />
+	<Image src={logoDark} alt="ArdiQ" class="landing-logo light:sl-hidden" loading="eager" />
+	<p class="landing-tagline">A fast distributed task queue with a Rust core and a clean Python API, backed by Redis streams.</p>
+	<p class="hero-badges">
+		<a href="https://pypi.org/project/ardiq/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/ardiq.svg" /></a>
+		<a href="https://pypi.org/project/ardiq/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/ardiq.svg" /></a>
+		<a href="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml/badge.svg" /></a>
+		<a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/17tayyy/ardiq.svg" /></a>
+	</p>
+	<div class="landing-actions">
+		<LinkButton href="/guides/getting-started/" icon="right-arrow">Get started</LinkButton>
+		<LinkButton href="https://github.com/17tayyy/ardiq" variant="minimal" icon="external">View on GitHub</LinkButton>
+	</div>
+</div>
+
+ArdiQ runs the worker loop and all Redis I/O in **Rust** (via [PyO3](https://pyo3.rs) +
+[tokio](https://tokio.rs)); you write tasks in plain **Python**. The two meet at a single
+async callback, with the GIL held only for the microseconds it takes to start a task and
+read its result — so a single process handles high concurrency on a tiny memory footprint.
+
+<CardGrid stagger>
+	<Card title="Rust core, off the GIL" icon="rocket">
+		The loop and every Redis round-trip run on tokio, in Rust — top-tier
+		throughput at roughly a third of the memory of comparable queues.
+	</Card>
+	<Card title="Batteries included" icon="setting">
+		Priorities, delayed & scheduled tasks, automatic retries with backoff,
+		per-task timeouts, results with TTL, and status introspection.
+	</Card>
+	<Card title="Sync & async tasks" icon="seti:python">
+		`async def` tasks run on the loop; blocking `def` tasks run in a thread
+		pool so they never freeze the worker.
+	</Card>
+	<Card title="Crash recovery" icon="approve-check">
+		In-flight tasks of a dead worker are reclaimed via Redis consumer groups
+		(`XAUTOCLAIM`) and a heartbeat.
+	</Card>
+</CardGrid>
+
+## Quickstart
+
+```python title="example.py"
+from ardiq import Ardiq
+
+app = Ardiq(redis_url="redis://localhost:6379", queue_name="example")
+
+
+@app.task()
+async def add(a: int, b: int) -> int:
+    return a + b
+```
+
+```console
+$ ardiq run example:app
+```
+
+<CardGrid>
+	<LinkCard title="Getting started" href="/guides/getting-started/" description="Install ArdiQ, start Redis, run your first worker." />
+	<LinkCard title="Performance" href="/guides/performance/" description="Benchmarks vs five other Python task queues." />
+	<LinkCard title="Defining tasks" href="/guides/tasks/" description="The @app.task decorator, retries, timeouts and priorities." />
+	<LinkCard title="Configuration reference" href="/reference/configuration/" description="Every Ardiq(...) option explained." />
+</CardGrid>

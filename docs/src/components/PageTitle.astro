@@ -1,0 +1,7 @@
+---
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+---
+
+{isSplash ? null : <Default />}

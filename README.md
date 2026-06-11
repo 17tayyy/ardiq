@@ -1,9 +1,16 @@
-# ArdiQ
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/ardiq-logo-dark.png">
+    <img alt="ArdiQ" src="docs/src/assets/ardiq-logo.png" width="260">
+  </picture>
+</p>
 
-[![PyPI version](https://img.shields.io/pypi/v/ardiq.svg)](https://pypi.org/project/ardiq/)
-[![Python versions](https://img.shields.io/pypi/pyversions/ardiq.svg)](https://pypi.org/project/ardiq/)
-[![CI](https://github.com/17tayyy/ardiq/actions/workflows/ci.yml/badge.svg)](https://github.com/17tayyy/ardiq/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/17tayyy/ardiq.svg)](https://github.com/17tayyy/ardiq/blob/main/LICENSE)
+<p align="center">
+  <a href="https://pypi.org/project/ardiq/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/ardiq.svg"></a>
+  <a href="https://pypi.org/project/ardiq/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/ardiq.svg"></a>
+  <a href="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/17tayyy/ardiq.svg"></a>
+</p>
 
 A fast distributed task queue with a **Rust core** and a clean **Python API**, backed by Redis streams.
 
