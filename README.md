@@ -12,6 +12,8 @@
   <a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/17tayyy/ardiq.svg"></a>
 </p>
 
+---
+
 A fast distributed task queue with a **Rust core** and a clean **Python API**, backed by Redis streams.
 
 ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs) + [tokio](https://tokio.rs)); you write tasks in plain Python. The two meet at a single async callback, with the GIL held only for the microseconds it takes to start a task and read its result — so a single process handles high concurrency.
