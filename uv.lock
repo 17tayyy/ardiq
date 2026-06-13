@@ -13,10 +13,14 @@ wheels = [
 
 [[package]]
 name = "ardiq"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "msgpack" },
+]
+
+[package.optional-dependencies]
+cli = [
     { name = "typer" },
 ]
 
@@ -27,13 +31,15 @@ dev = [
     { name = "redis" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "typer" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "msgpack", specifier = ">=1.1.2" },
-    { name = "typer", specifier = ">=0.26.0" },
+    { name = "typer", marker = "extra == 'cli'", specifier = ">=0.26.0" },
 ]
+provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -42,6 +48,7 @@ dev = [
     { name = "redis", specifier = ">=8.0.0" },
     { name = "ruff", specifier = ">=0.15.15" },
     { name = "ty", specifier = ">=0.0.40" },
+    { name = "typer", specifier = ">=0.26.0" },
 ]
 
 [[package]]

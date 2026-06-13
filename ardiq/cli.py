@@ -9,7 +9,13 @@ import logging
 import signal
 from typing import TYPE_CHECKING, Annotated
 
-import typer
+try:
+    import typer
+except ModuleNotFoundError as exc:  # pragma: no cover, only without the [cli] extra
+    raise SystemExit(
+        "The `ardiq` command needs the CLI extra. Install it with:\n"
+        "    pip install 'ardiq[cli]'"
+    ) from exc
 
 from ardiq._core import init_logging
 
