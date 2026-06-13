@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/ardiq-logo-dark.png">
-    <img alt="ArdiQ" src="docs/src/assets/ardiq-logo.png" width="260">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/17tayyy/ardiq/main/docs/src/assets/ardiq-logo-dark.png">
+    <img alt="ArdiQ" src="https://raw.githubusercontent.com/17tayyy/ardiq/main/docs/src/assets/ardiq-logo.png" width="260">
   </picture>
 </p>
 
@@ -9,7 +9,7 @@
   <a href="https://pypi.org/project/ardiq/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/ardiq.svg"></a>
   <a href="https://pypi.org/project/ardiq/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/ardiq.svg"></a>
   <a href="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/17tayyy/ardiq/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/17tayyy/ardiq.svg"></a>
+  <a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
 
 ---

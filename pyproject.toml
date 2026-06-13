@@ -16,6 +16,8 @@ classifiers = [
     "Framework :: AsyncIO",
     "Topic :: System :: Distributed Computing",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
     "msgpack>=1.1.2",
