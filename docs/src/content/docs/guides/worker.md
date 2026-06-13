@@ -10,6 +10,9 @@ pulling tasks and executing them. The usual way to start one is the CLI.
 
 ## The CLI
 
+The `ardiq` command ships in the `cli` extra (`pip install 'ardiq[cli]'`); to run a worker
+without it, use [Running in code](#running-in-code) below.
+
 ```console
 $ ardiq run example:app
 ```

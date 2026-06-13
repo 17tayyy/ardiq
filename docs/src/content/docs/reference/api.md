@@ -21,6 +21,7 @@ Ardiq(
     *,
     serializer: Callable[[Any], bytes] | None = None,
     deserializer: Callable[[bytes], Any] | None = None,
+    cron_poll_s: float = 1.0,
     **core_kwargs: Any,
 )
 ```
@@ -55,6 +56,27 @@ def task(
 
 Usable bare (`@app.task`) or called (`@app.task(max_retries=5)`). See
 [Defining tasks](/guides/tasks/).
+
+### `cron(...)`
+
+Register a recurring task and return a [`Task`](#task); see
+[Recurring tasks](/guides/recurring/).
+
+```python
+def cron(
+    spec: str | None = None,
+    *,
+    every: timedelta | float | None = None,
+    name: str | None = None,
+    max_retries: int = 3,
+    backoff_ms: int = 0,
+    timeout: float | None = None,
+    priority: str | None = None,
+) -> Callable[..., Task]
+```
+
+Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds or a
+`timedelta`).
 
 ### Methods
 

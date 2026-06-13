@@ -23,6 +23,7 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 - 🦀 **Rust core** — the loop and Redis I/O run on tokio, off the GIL
 - **Priority queues** — higher-priority tasks are consumed first
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
+- **Cron & recurring** tasks (`@app.cron`) — 5-field cron (UTC) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
@@ -89,11 +90,21 @@ is the Rust core (memory and per-task overhead) and a batteries-included API.
 $ pip install ardiq
 ```
 
-You also need a Redis server. For local development:
+The base install is the library only — a **single runtime dependency** (`msgpack`)
+— enough to define tasks, enqueue them, and run a worker from your own code
+(`await app.run()`). For the `ardiq` worker command, add the CLI extra:
 
 ```console
-$ docker compose up -d
+$ pip install 'ardiq[cli]'
 ```
+
+You also need a Redis server — the quickest way is Docker:
+
+```console
+$ docker run -d --name ardiq-redis -p 6379:6379 redis
+```
+
+or install it from your package manager (or [redis.io](https://redis.io)).
 
 > **Building from source** (if you want to hack on ArdiQ itself): you'll need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/). Clone the repo and run `uv sync`.
 
@@ -143,6 +154,27 @@ asyncio.run(main())
 Or run the whole thing in one process with `python example.py`, which enqueues a
 few tasks and processes them in burst mode.
 
+## Recurring tasks
+
+Register a task to run on a schedule with `@app.cron` — either a standard 5-field
+cron expression (evaluated in **UTC**) or a fixed `every=` interval:
+
+```python
+@app.cron("0 3 * * *")            # daily at 03:00 UTC
+async def nightly_report():
+    ...
+
+
+@app.cron(every=30)               # every 30s — int/float seconds or a timedelta
+async def heartbeat():
+    ...
+```
+
+Recurring tasks fire while a worker is running, and each occurrence is an ordinary
+task with its own result, status, retries and timeout. The cron syntax is the
+common subset — `*`, lists `,`, ranges `a-b`, and steps `*/n` — at minute
+resolution; use `every=` for sub-minute schedules.
+
 ## Configuration
 
 `Ardiq(...)` accepts:
@@ -158,8 +190,10 @@ few tasks and processes them in burst mode.
 | `result_ttl_ms` | `300000` | How long results live (`0` drops, negative keeps forever) |
 | `burst` | `False` | Exit once the queue drains |
 | `serializer` / `deserializer` | msgpack | Wire codec; pass `pickle.dumps`/`pickle.loads` to send datetimes/objects |
+| `cron_poll_s` | `1.0` | How often the worker restages due `@app.cron` occurrences |
 
 `@app.task(...)` accepts `name`, `max_retries` (default 3), `backoff_ms`, `timeout` (seconds), and `priority`.
+`@app.cron(spec, *, every=…, …)` takes those same per-task options plus the schedule.
 Use `task.options(delay_ms=…, schedule_ms=…, priority=…, task_id=…).enqueue(...)` for one-off overrides.
 
 ## Development

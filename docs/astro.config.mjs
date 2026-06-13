@@ -52,7 +52,7 @@ export default defineConfig({
             operatingSystem: "Linux",
             description,
             url: site,
-            softwareVersion: "0.1.1",
+            softwareVersion: "0.2.0",
             programmingLanguage: ["Python", "Rust"],
             license: "https://opensource.org/licenses/MIT",
             author: { "@type": "Person", name: "17tayyy" },
@@ -86,6 +86,7 @@ export default defineConfig({
           items: [
             { label: "Defining tasks", slug: "guides/tasks" },
             { label: "Enqueuing & scheduling", slug: "guides/enqueuing" },
+            { label: "Recurring tasks", slug: "guides/recurring" },
             { label: "Results & introspection", slug: "guides/results" },
             { label: "Running a worker", slug: "guides/worker" },
             { label: "Serialization", slug: "guides/serialization" },

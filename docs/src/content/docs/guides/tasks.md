@@ -111,6 +111,11 @@ await urgent.options(priority="low").enqueue(...)
 
 See [Enqueuing & scheduling](/guides/enqueuing/) for per-call overrides.
 
+## Recurring tasks
+
+To run a task on a schedule instead of on demand, register it with `@app.cron` (a cron
+expression or an `every=` interval) — see [Recurring tasks](/guides/recurring/).
+
 ## Calling a task inline
 
 A registered task is still a normal callable — calling it runs the function directly,

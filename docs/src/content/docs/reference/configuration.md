@@ -31,10 +31,11 @@ app = Ardiq(
 | `burst` | `False` | Exit once the queue drains (also settable via `app.burst` or the CLI `--burst`). |
 | `serializer` | msgpack | `Callable[[Any], bytes]` used to encode arguments and results. |
 | `deserializer` | msgpack | `Callable[[bytes], Any]` used to decode them. |
+| `cron_poll_s` | `1.0` | Seconds between re-checks of each `@app.cron`'s next fire time. |
 
 :::note
-`redis_url`, `queue_name`, and `priorities` are positional-or-keyword; `serializer` and
-`deserializer` are keyword-only. The remaining options (`concurrency`, `prefetch`,
+`redis_url`, `queue_name`, and `priorities` are positional-or-keyword; `serializer`,
+`deserializer` and `cron_poll_s` are keyword-only. The remaining options (`concurrency`, `prefetch`,
 `idle_timeout_ms`, `result_ttl_ms`, `burst`) are forwarded to the Rust core as keyword
 arguments.
 :::
@@ -79,3 +80,9 @@ Controls result retention:
 
 See [Serialization](/guides/serialization/). Every process on a queue must use the same
 codec.
+
+### `cron_poll_s`
+
+How often a running worker re-stages each [recurring task](/guides/recurring/)'s next
+occurrence. The default of 1s is fine for minute-resolution cron; lower it only if you rely
+on short `every=` intervals.
