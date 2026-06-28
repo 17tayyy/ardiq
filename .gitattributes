@@ -1,0 +1,8 @@
+# GitHub Linguist: keep the language bar on the Rust core + Python API,
+# not the docs site or generated lockfiles.
+docs/**   linguist-documentation
+*.lock    linguist-generated
+
+# Tests aren't the shipped product; excluding them lets the Rust core lead the
+# bar. Drop this line if you'd rather the stats count tests too.
+tests/**  linguist-vendored
