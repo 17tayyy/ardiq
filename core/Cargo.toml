@@ -8,6 +8,7 @@ name = "_ardiq_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+futures-util = { version = "0.3" }
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "signal", "macros"] }

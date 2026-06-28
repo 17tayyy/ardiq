@@ -85,7 +85,8 @@ impl Worker {
             permits: Arc::new(AtomicI64::new(self.config.prefetch)),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         };
-        let (tx, rx) = async_channel::bounded::<StreamMessage>(self.config.prefetch.max(1) as usize);
+        let (tx, rx) =
+            async_channel::bounded::<StreamMessage>(self.config.prefetch.max(1) as usize);
 
         let mut handles = Vec::new();
 
@@ -175,7 +176,12 @@ impl Worker {
         Ok(())
     }
 
-    async fn consumer(&self, rx: Receiver<StreamMessage>, state: RunState, mut conn: ConnectionManager) {
+    async fn consumer(
+        &self,
+        rx: Receiver<StreamMessage>,
+        state: RunState,
+        mut conn: ConnectionManager,
+    ) {
         loop {
             let msg = tokio::select! {
                 _ = self.cancel.cancelled() => break,
@@ -202,11 +208,10 @@ impl Worker {
         if let Err(err) = self.queue.mark_running(conn, &task_id).await {
             tracing::error!("ardiq mark_running failed for {task_id}: {err}");
         }
-        state
-            .in_flight
-            .lock()
-            .await
-            .insert(task_id.clone(), (msg.priority.clone(), msg.message_id.clone()));
+        state.in_flight.lock().await.insert(
+            task_id.clone(),
+            (msg.priority.clone(), msg.message_id.clone()),
+        );
 
         if let Err(err) = self.execute_and_finish(&msg, tries, conn).await {
             tracing::error!("ardiq failed to finalize {task_id}: {err}");
@@ -237,7 +242,9 @@ impl Worker {
         match exec.outcome {
             Outcome::Success | Outcome::Failure => {
                 let ttl = ResultTtl::from_ms(self.config.result_ttl_ms);
-                self.queue.complete(conn, msg, &exec.result, ttl, now_ms()).await
+                self.queue
+                    .complete(conn, msg, &exec.result, ttl, now_ms())
+                    .await
             }
             Outcome::Retry { delay_ms } => {
                 let delay = delay_ms.unwrap_or_else(|| tries * tries * 1000);
@@ -256,7 +263,10 @@ impl Worker {
 
             let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
             for (priority, message_id) in state.in_flight.lock().await.values() {
-                grouped.entry(priority.clone()).or_default().push(message_id.clone());
+                grouped
+                    .entry(priority.clone())
+                    .or_default()
+                    .push(message_id.clone());
             }
 
             let running: usize = grouped.values().map(Vec::len).sum();

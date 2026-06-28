@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 -- Stage a task atomically.
 -- ARGV: 1 task-data key, 2 stream key, 3 delayed key, 4 task id, 5 payload,
 --       6 score (0 = immediate), 7 expire ms (0 = none), 8 now ms.

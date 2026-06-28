@@ -17,7 +17,7 @@ job = await add.enqueue(2, 3)
 the task finishes.
 
 ```python
-# poll once: returns the result now, or None if it isn't ready yet
+# fetch once: returns the result now, or None if it isn't ready yet
 result = await job.result()
 
 # wait up to 5 seconds, raising TimeoutError if it never lands
@@ -26,8 +26,8 @@ result = await job.result(timeout=5)
 
 - **Without `timeout`** it returns the stored result immediately, or `None` if the task
   hasn't completed.
-- **With `timeout`** (seconds) it polls until the result is stored, raising `TimeoutError`
-  if it isn't in time.
+- **With `timeout`** (seconds) it waits for the result and returns the instant the worker
+  publishes it — no polling — raising `TimeoutError` if it isn't stored in time.
 
 ### The `TaskResult`
 

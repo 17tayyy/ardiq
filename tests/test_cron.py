@@ -13,9 +13,6 @@ def _ms(y: int, mo: int, d: int, h: int, mi: int) -> int:
     return int(datetime(y, mo, d, h, mi, tzinfo=UTC).timestamp() * 1000)
 
 
-# --- Cron parsing -----------------------------------------------------------
-
-
 def test_cron_every_minute():
     spec = _parse_cron("* * * * *")
     # 10:00:05 → next whole minute is 10:01.
@@ -68,9 +65,6 @@ def test_cron_rejects_invalid(expr):
         _parse_cron(expr)
 
 
-# --- Interval scheduling ----------------------------------------------------
-
-
 def test_interval_alignment():
     s = _Schedule(every=0.3)  # 300 ms, aligned to the epoch
     assert s.next_after(0) == 300
@@ -87,9 +81,6 @@ def test_schedule_requires_exactly_one():
         _Schedule(every=1, cron="* * * * *")
 
 
-# --- Registration -----------------------------------------------------------
-
-
 def test_cron_registers_callable_task(make_app):
     app = make_app("cronreg")
 
@@ -99,9 +90,6 @@ def test_cron_registers_callable_task(make_app):
 
     assert "report" in app.tasks
     assert report() == 42  # still a normal Task, callable inline
-
-
-# --- End-to-end -------------------------------------------------------------
 
 
 async def test_cron_fires_repeatedly(redis, make_app, poll):

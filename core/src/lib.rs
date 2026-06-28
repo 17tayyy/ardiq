@@ -4,6 +4,7 @@ mod worker;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -177,7 +178,9 @@ impl ArdiqCore {
                 0
             };
             let queued = queue
-                .enqueue(&mut conn, &task_id, &payload, &priority, score, expire_ms, now)
+                .enqueue(
+                    &mut conn, &task_id, &payload, &priority, score, expire_ms, now,
+                )
                 .await
                 .map_err(to_py_err)?;
             Ok(queued)
@@ -231,7 +234,53 @@ impl ArdiqCore {
         let client = self.client.clone();
         future_into_py(py, async move {
             let mut conn = shared_conn(&conn, &client).await?;
-            let raw = queue.fetch_result(&mut conn, &task_id).await.map_err(to_py_err)?;
+            let raw = queue
+                .fetch_result(&mut conn, &task_id)
+                .await
+                .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                Ok(match raw {
+                    Some(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
+                    None => py.None(),
+                })
+            })
+        })
+    }
+
+    #[pyo3(signature = (task_id, timeout_ms))]
+    fn await_result<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+        timeout_ms: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut pubsub = client.get_async_pubsub().await.map_err(to_py_err)?;
+            pubsub
+                .subscribe(queue.result_channel(&task_id))
+                .await
+                .map_err(to_py_err)?;
+
+            let mut shared = shared_conn(&conn, &client).await?;
+            let raw = match queue
+                .fetch_result(&mut shared, &task_id)
+                .await
+                .map_err(to_py_err)?
+            {
+                Some(bytes) => Some(bytes),
+                None => {
+                    let dur = std::time::Duration::from_millis(timeout_ms);
+                    let _ = tokio::time::timeout(dur, pubsub.on_message().next()).await;
+                    queue
+                        .fetch_result(&mut shared, &task_id)
+                        .await
+                        .map_err(to_py_err)?
+                }
+            };
+
             Python::attach(|py| -> PyResult<Py<PyAny>> {
                 Ok(match raw {
                     Some(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
@@ -259,8 +308,10 @@ impl ArdiqCore {
         let client = self.client.clone();
         future_into_py(py, async move {
             let mut conn = shared_conn(&conn, &client).await?;
-            let (payload, tries, scheduled) =
-                queue.fetch_info(&mut conn, &task_id).await.map_err(to_py_err)?;
+            let (payload, tries, scheduled) = queue
+                .fetch_info(&mut conn, &task_id)
+                .await
+                .map_err(to_py_err)?;
             Python::attach(|py| -> PyResult<(Py<PyAny>, i64, i64)> {
                 let payload = match payload {
                     Some(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
@@ -313,8 +364,7 @@ fn init_logging(verbose: bool) {
     use tracing_subscriber::EnvFilter;
 
     let level = if verbose { "debug" } else { "info" };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
     let _ = fmt::Subscriber::builder()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)

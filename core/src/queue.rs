@@ -98,6 +98,9 @@ impl Queue {
     fn health_key(&self, worker_id: &str) -> String {
         format!("{}:health:{worker_id}", self.prefix)
     }
+    pub fn result_channel(&self, task_id: &str) -> String {
+        format!("{}:result:channel:{task_id}", self.prefix)
+    }
 
     pub async fn create_groups<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<()> {
         for priority in &self.priorities {
@@ -161,7 +164,6 @@ impl Queue {
         }
         Ok(moved)
     }
-
 
     pub async fn read_batch<C: ConnectionLike>(
         &self,
@@ -309,9 +311,16 @@ impl Queue {
         let stream = self.stream_key(&msg.priority);
         let mut pipe = redis::pipe();
         pipe.atomic();
-        pipe.cmd("XACK").arg(&stream).arg(GROUP).arg(&msg.message_id).ignore();
+        pipe.cmd("XACK")
+            .arg(&stream)
+            .arg(GROUP)
+            .arg(&msg.message_id)
+            .ignore();
         pipe.cmd("XDEL").arg(&stream).arg(&msg.message_id).ignore();
-        pipe.cmd("SREM").arg(self.running_set()).arg(&msg.task_id).ignore();
+        pipe.cmd("SREM")
+            .arg(self.running_set())
+            .arg(&msg.task_id)
+            .ignore();
         pipe.cmd("DEL")
             .arg(self.retry_key(&msg.task_id))
             .arg(self.task_key(&msg.task_id))
@@ -319,7 +328,10 @@ impl Queue {
         match ttl {
             ResultTtl::None => {}
             ResultTtl::Forever => {
-                pipe.cmd("SET").arg(self.result_key(&msg.task_id)).arg(result).ignore();
+                pipe.cmd("SET")
+                    .arg(self.result_key(&msg.task_id))
+                    .arg(result)
+                    .ignore();
                 pipe.cmd("ZADD")
                     .arg(self.results_set())
                     .arg(now_ms + FAR_FUTURE_MS)
@@ -340,6 +352,10 @@ impl Queue {
                     .ignore();
             }
         }
+        pipe.cmd("PUBLISH")
+            .arg(self.result_channel(&msg.task_id))
+            .arg(&msg.task_id)
+            .ignore();
         pipe.query_async(conn).await
     }
 
@@ -352,9 +368,16 @@ impl Queue {
         let stream = self.stream_key(&msg.priority);
         let mut pipe = redis::pipe();
         pipe.atomic();
-        pipe.cmd("XACK").arg(&stream).arg(GROUP).arg(&msg.message_id).ignore();
+        pipe.cmd("XACK")
+            .arg(&stream)
+            .arg(GROUP)
+            .arg(&msg.message_id)
+            .ignore();
         pipe.cmd("XDEL").arg(&stream).arg(&msg.message_id).ignore();
-        pipe.cmd("SREM").arg(self.running_set()).arg(&msg.task_id).ignore();
+        pipe.cmd("SREM")
+            .arg(self.running_set())
+            .arg(&msg.task_id)
+            .ignore();
         pipe.cmd("ZADD")
             .arg(self.delayed_key(&msg.priority))
             .arg(fire_at_ms)
@@ -371,9 +394,16 @@ impl Queue {
         let stream = self.stream_key(&msg.priority);
         let mut pipe = redis::pipe();
         pipe.atomic();
-        pipe.cmd("XACK").arg(&stream).arg(GROUP).arg(&msg.message_id).ignore();
+        pipe.cmd("XACK")
+            .arg(&stream)
+            .arg(GROUP)
+            .arg(&msg.message_id)
+            .ignore();
         pipe.cmd("XDEL").arg(&stream).arg(&msg.message_id).ignore();
-        pipe.cmd("SREM").arg(self.running_set()).arg(&msg.task_id).ignore();
+        pipe.cmd("SREM")
+            .arg(self.running_set())
+            .arg(&msg.task_id)
+            .ignore();
         pipe.cmd("DEL").arg(self.retry_key(&msg.task_id)).ignore();
         pipe.query_async(conn).await
     }

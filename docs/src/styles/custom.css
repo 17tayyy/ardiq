@@ -1,56 +1,56 @@
 :root {
-	--sl-color-accent-low: #3a160c;
-	--sl-color-accent: #c63d1b;
-	--sl-color-accent-high: #f3b69e;
+  --sl-color-accent-low: #3a160c;
+  --sl-color-accent: #c63d1b;
+  --sl-color-accent-high: #f3b69e;
 }
 
-:root[data-theme='light'] {
-	--sl-color-accent-low: #ffe1d3;
-	--sl-color-accent: #b63616;
-	--sl-color-accent-high: #511604;
+:root[data-theme="light"] {
+  --sl-color-accent-low: #ffe1d3;
+  --sl-color-accent: #b63616;
+  --sl-color-accent-high: #511604;
 }
 
 .landing-hero {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	text-align: center;
-	gap: 1.5rem;
-	padding-block: clamp(2rem, 5vw, 4.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1.5rem;
+  padding-block: clamp(2rem, 5vw, 4.5rem);
 }
 
 .landing-logo {
-	width: min(100%, 20rem);
-	height: auto;
+  width: min(100%, 20rem);
+  height: auto;
 }
 
 .landing-tagline {
-	max-width: 48ch;
-	margin: 0;
-	font-size: clamp(var(--sl-text-base), calc(0.6rem + 1vw), var(--sl-text-xl));
-	color: var(--sl-color-gray-2);
+  max-width: 48ch;
+  margin: 0;
+  font-size: clamp(var(--sl-text-base), calc(0.6rem + 1vw), var(--sl-text-xl));
+  color: var(--sl-color-gray-2);
 }
 
 .landing-actions {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: center;
-	gap: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
 }
 
 .hero-badges {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	justify-content: center;
-	gap: 0.5rem;
-	margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0;
 }
 
 .hero-badges a {
-	display: inline-flex;
+  display: inline-flex;
 }
 
 .hero-badges img {
-	height: 20px;
+  height: 20px;
 }

@@ -273,14 +273,11 @@ class Ardiq:
         result now or `None` if it isn't ready."""
         if timeout is None:
             return self._unpack(await self._core.result(task_id))
-        deadline = time.monotonic() + timeout
-        while True:
-            raw = await self._core.result(task_id)
-            if raw is not None:
-                return self._unpack(raw)
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"no result for {task_id!r} within {timeout}s")
-            await asyncio.sleep(0.05)
+        raw = await self._core.await_result(task_id, int(timeout * 1000))
+        if raw is None:
+            raise TimeoutError(f"no result for {task_id!r} within {timeout}s")
+
+        return self._unpack(raw)
 
     async def status(self, task_id: str) -> str:
         """A task's status: 'queued', 'scheduled', 'running', 'complete', or 'not_found'."""
