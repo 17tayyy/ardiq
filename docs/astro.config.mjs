@@ -52,7 +52,7 @@ export default defineConfig({
             operatingSystem: "Linux",
             description,
             url: site,
-            softwareVersion: "0.2.0",
+            softwareVersion: "0.2.1",
             programmingLanguage: ["Python", "Rust"],
             license: "https://opensource.org/licenses/MIT",
             author: { "@type": "Person", name: "17tayyy" },
