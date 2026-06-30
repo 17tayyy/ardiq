@@ -44,7 +44,13 @@ def import_string(path: str) -> Ardiq:
         raise ValueError(f"{module_path!r} has no attribute {attr!r}") from exc
 
 
-async def serve(app: Ardiq, burst: bool) -> None:
+async def serve(
+    app: Ardiq,
+    burst: bool,
+    *,
+    app_path: str = "",
+    quiet: bool = False,
+) -> None:
     """Run a worker until the queue drains (burst) or a signal stops it."""
     app.burst = burst
     loop = asyncio.get_running_loop()
@@ -52,12 +58,17 @@ async def serve(app: Ardiq, burst: bool) -> None:
         with contextlib.suppress(NotImplementedError, ValueError, RuntimeError):
             loop.add_signal_handler(sig, app.stop)
 
-    logger.info(
-        "starting worker %s for %d task(s)%s",
-        app.worker_id,
-        len(app.tasks),
-        " [burst]" if burst else "",
-    )
+    if not quiet:
+        from ardiq.banner import print_startup_banner
+
+        print_startup_banner(app, app_path=app_path or "?", burst=burst)
+    else:
+        logger.info(
+            "starting worker %s for %d task(s)%s",
+            app.worker_id,
+            len(app.tasks),
+            " [burst]" if burst else "",
+        )
     try:
         await app.run()
     finally:
@@ -73,6 +84,14 @@ def run(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="Use DEBUG-level logging")
     ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "--quiet",
+            "-q",
+            help="Skip the startup banner (plain log line instead)",
+        ),
+    ] = False,
 ) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -82,7 +101,7 @@ def run(
     init_logging(verbose)  # surface the Rust core's logs too
     worker = import_string(app)
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(serve(worker, burst))
+        asyncio.run(serve(worker, burst, app_path=app, quiet=quiet))
 
 
 def main(argv: list[str] | None = None) -> None:

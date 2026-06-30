@@ -66,6 +66,46 @@ class Ardiq:
         self._core = ArdiqCore({k: v for k, v in config.items() if v is not None})
 
     @property
+    def redis_url(self) -> str:
+        """Resolved Redis URL (defaults applied by the core)."""
+        return self._core.redis_url
+
+    @property
+    def queue_name(self) -> str:
+        """Queue name."""
+        return self._core.queue_name
+
+    @property
+    def priorities(self) -> list[str]:
+        """Configured priorities, in the order passed (lowest priority first)."""
+        return self._core.priorities
+
+    @property
+    def concurrency(self) -> int:
+        """Maximum concurrent task executions."""
+        return self._core.concurrency
+
+    @property
+    def prefetch(self) -> int:
+        """Maximum tasks prefetched from Redis."""
+        return self._core.prefetch
+
+    @property
+    def idle_timeout_ms(self) -> int:
+        """Idle time before reclaiming in-flight tasks from a dead worker."""
+        return self._core.idle_timeout_ms
+
+    @property
+    def poll_block_ms(self) -> int:
+        """Redis stream read block timeout."""
+        return self._core.poll_block_ms
+
+    @property
+    def result_ttl_ms(self) -> int:
+        """How long task results are kept in Redis."""
+        return self._core.result_ttl_ms
+
+    @property
     def worker_id(self) -> str:
         """This worker's unique id."""
         return self._core.worker_id
@@ -83,6 +123,11 @@ class Ardiq:
     def tasks(self) -> list[str]:
         """Names of the registered tasks."""
         return list(self._registry)
+
+    @property
+    def crons(self) -> list[str]:
+        """Names of the registered cron tasks."""
+        return list(self._crons)
 
     def task(
         self,

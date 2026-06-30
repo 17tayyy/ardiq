@@ -76,6 +76,12 @@ fn failure() -> ExecOutcome {
 #[pyclass]
 struct ArdiqCore {
     client: redis::Client,
+    #[pyo3(get)]
+    redis_url: String,
+    #[pyo3(get)]
+    queue_name: String,
+    #[pyo3(get)]
+    priorities: Vec<String>,
     queue: Arc<Queue>,
     config: WorkerConfig,
     cancel: CancellationToken,
@@ -94,11 +100,11 @@ impl ArdiqCore {
             .map(|v| v.extract())
             .transpose()?
             .unwrap_or_else(|| "default".to_string());
-        let mut priorities: Vec<String> = opt(&config, "priorities")?
+        let priorities: Vec<String> = opt(&config, "priorities")?
             .map(|v| v.extract())
             .transpose()?
             .unwrap_or_else(|| vec!["default".to_string()]);
-        priorities.reverse();
+        let queue_priorities: Vec<String> = priorities.iter().rev().cloned().collect();
 
         let concurrency: usize = opt(&config, "concurrency")?
             .map(|v| v.extract())
@@ -130,9 +136,9 @@ impl ArdiqCore {
             .transpose()?
             .unwrap_or_else(default_worker_id);
 
-        let client = redis::Client::open(redis_url).map_err(to_py_err)?;
-        let queue = Arc::new(Queue::new(&queue_name, priorities));
-        let config = WorkerConfig {
+        let client = redis::Client::open(redis_url.as_str()).map_err(to_py_err)?;
+        let queue = Arc::new(Queue::new(&queue_name, queue_priorities));
+        let worker_config = WorkerConfig {
             worker_id,
             concurrency,
             prefetch,
@@ -144,8 +150,11 @@ impl ArdiqCore {
 
         Ok(ArdiqCore {
             client,
+            redis_url,
+            queue_name,
+            priorities,
             queue,
-            config,
+            config: worker_config,
             cancel: CancellationToken::new(),
             conn: Arc::new(OnceCell::new()),
         })
@@ -325,6 +334,31 @@ impl ArdiqCore {
     #[getter]
     fn worker_id(&self) -> &str {
         &self.config.worker_id
+    }
+
+    #[getter]
+    fn concurrency(&self) -> usize {
+        self.config.concurrency
+    }
+
+    #[getter]
+    fn prefetch(&self) -> i64 {
+        self.config.prefetch
+    }
+
+    #[getter]
+    fn idle_timeout_ms(&self) -> i64 {
+        self.config.idle_timeout_ms
+    }
+
+    #[getter]
+    fn poll_block_ms(&self) -> i64 {
+        self.config.poll_block_ms
+    }
+
+    #[getter]
+    fn result_ttl_ms(&self) -> i64 {
+        self.config.result_ttl_ms
     }
 }
 

@@ -44,7 +44,7 @@ async def test_serve_burst_runs_to_completion(redis, make_app):
         return a + b
 
     job = await add.enqueue(2, 3)
-    await asyncio.wait_for(serve(app, burst=True), timeout=15)
+    await asyncio.wait_for(serve(app, burst=True, quiet=True), timeout=15)
 
     res = await job.result()
     assert res is not None and res.success and res.value == 5
