@@ -72,7 +72,7 @@ async def serve(
     try:
         await app.run()
     finally:
-        logger.info("worker %s stopped", app.worker_id)
+        logger.info(f"worker {app.worker_id} stopped")
 
 
 @cli.command(help="Run a worker")

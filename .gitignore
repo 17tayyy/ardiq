@@ -21,6 +21,7 @@ dist/
 
 .DS_Store
 ROADMAP.md
+TODO.md
 .claude
 .vscode
 .ruff_cache

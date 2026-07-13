@@ -46,6 +46,7 @@ class Ardiq:
         redis_url: str | None = None,
         queue_name: str = "default",
         priorities: list[str] | None = None,
+        worker_id: str | None = None,
         *,
         serializer: Callable[[Any], bytes] | None = None,
         deserializer: Callable[[bytes], Any] | None = None,
@@ -61,6 +62,7 @@ class Ardiq:
             "redis_url": redis_url,
             "queue_name": queue_name,
             "priorities": priorities,
+            "worker_id": worker_id,
             **core_kwargs,
         }
         self._core = ArdiqCore({k: v for k, v in config.items() if v is not None})
@@ -259,6 +261,7 @@ class Ardiq:
     ) -> tuple[int, bytes, int]:
         """The core's per-task callback. Returns (outcome, result_bytes, retry_ms)."""
         data = self._loads(payload)
+        logger.info(f"started id={task_id} name={data['f']!r} try={tries}")
         enqueue_time = int(data.get("t", 0))
         start = _now_ms()
         reg = self._registry.get(data["f"])
@@ -266,6 +269,8 @@ class Ardiq:
             env = self._envelope(
                 False, f"unknown task {data['f']!r}", tries, enqueue_time, start
             )
+            err = f"unknown task {data['f']!r}"
+            logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
             return FAILURE, env, 0
 
         try:
@@ -283,9 +288,12 @@ class Ardiq:
             else:
                 err = repr(exc)
             if tries <= reg.max_retries:
+                logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
                 return RETRY, b"", reg.backoff_ms  # 0 = core's default backoff
+            logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
             return FAILURE, self._envelope(False, err, tries, enqueue_time, start), 0
 
+        logger.info(f"task succeeded id={task_id} name={data['f']!r}")
         return SUCCESS, self._envelope(True, result, tries, enqueue_time, start), 0
 
     async def run(self) -> None:

@@ -81,6 +81,14 @@ impl Worker {
 
         self.queue.create_groups(&mut producer_conn).await?;
 
+        tracing::info!(
+            worker_id = %self.config.worker_id,
+            concurrency = self.config.concurrency,
+            prefetch = self.config.prefetch,
+            burst = self.config.burst,
+            "ardiq worker started"
+        );
+
         let state = RunState {
             permits: Arc::new(AtomicI64::new(self.config.prefetch)),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
@@ -123,6 +131,12 @@ impl Worker {
         for handle in handles {
             let _ = handle.await;
         }
+
+        tracing::info!(
+            worker_id = %self.config.worker_id,
+            "ardiq worker stopped"
+        );
+
         Ok(())
     }
 
