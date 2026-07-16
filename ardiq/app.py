@@ -261,17 +261,24 @@ class Ardiq:
     ) -> tuple[int, bytes, int]:
         """The core's per-task callback. Returns (outcome, result_bytes, retry_ms)."""
         data = self._loads(payload)
-        logger.info(f"started id={task_id} name={data['f']!r} try={tries}")
+        task_name = data["f"]
+        worker_id = self.worker_id
         enqueue_time = int(data.get("t", 0))
         start = _now_ms()
-        reg = self._registry.get(data["f"])
+
+        reg = self._registry.get(task_name)
         if reg is None:
-            env = self._envelope(
-                False, f"unknown task {data['f']!r}", tries, enqueue_time, start
+            logger.error(
+                f"task unknown id={task_id} name={task_name!r} worker={worker_id} try={tries}"
             )
-            err = f"unknown task {data['f']!r}"
-            logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
+            env = self._envelope(
+                False, f"unknown task {task_name!r}", tries, enqueue_time, start
+            )
             return FAILURE, env, 0
+
+        logger.debug(
+            f"task started id={task_id} name={task_name!r} worker={worker_id} try={tries}"
+        )
 
         try:
             if reg.is_async:
@@ -287,13 +294,25 @@ class Ardiq:
                 err = f"timed out after {reg.timeout}s"
             else:
                 err = repr(exc)
+            duration_ms = _now_ms() - start
             if tries <= reg.max_retries:
-                logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
+                delay_ms = reg.backoff_ms or tries * tries * 1000
+                logger.warning(
+                    f"task retry scheduled id={task_id} name={task_name!r} worker={worker_id} "
+                    f"try={tries} delay_ms={delay_ms} error={err}"
+                )
                 return RETRY, b"", reg.backoff_ms  # 0 = core's default backoff
-            logger.error(f"task failed id={task_id} name={data['f']!r} try={tries} error={err}")
+            logger.error(
+                f"task failed id={task_id} name={task_name!r} worker={worker_id} "
+                f"try={tries} duration_ms={duration_ms} error={err}"
+            )
             return FAILURE, self._envelope(False, err, tries, enqueue_time, start), 0
 
-        logger.info(f"task succeeded id={task_id} name={data['f']!r}")
+        duration_ms = _now_ms() - start
+        logger.debug(
+            f"task succeeded id={task_id} name={task_name!r} worker={worker_id} "
+            f"try={tries} duration_ms={duration_ms}"
+        )
         return SUCCESS, self._envelope(True, result, tries, enqueue_time, start), 0
 
     async def run(self) -> None:

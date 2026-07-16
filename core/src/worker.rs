@@ -132,7 +132,7 @@ impl Worker {
             let _ = handle.await;
         }
 
-        tracing::info!(
+        tracing::debug!(
             worker_id = %self.config.worker_id,
             "ardiq worker stopped"
         );

@@ -1,6 +1,7 @@
 """CLI: app loading and `ardiq run --burst`."""
 
 import asyncio
+import logging
 import os
 
 import pytest
@@ -48,3 +49,17 @@ async def test_serve_burst_runs_to_completion(redis, make_app):
 
     res = await job.result()
     assert res is not None and res.success and res.value == 5
+
+
+async def test_serve_logs_lifecycle_with_burst_reason(redis, make_app, caplog):
+    app = make_app("cli_log", concurrency=1, poll_block_ms=50)
+
+    with caplog.at_level(logging.INFO, logger="ardiq"):
+        await asyncio.wait_for(serve(app, burst=True, quiet=True), timeout=15)
+
+    messages = [r.message for r in caplog.records if r.name == "ardiq"]
+    assert any(
+        m.startswith("worker starting") and f"worker_id={app.worker_id}" in m
+        for m in messages
+    )
+    assert f"worker stopped worker_id={app.worker_id} reason=burst" in messages

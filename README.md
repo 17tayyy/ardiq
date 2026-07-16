@@ -196,6 +196,33 @@ resolution; use `every=` for sub-minute schedules.
 `@app.cron(spec, *, every=…, …)` takes those same per-task options plus the schedule.
 Use `task.options(delay_ms=…, schedule_ms=…, priority=…, task_id=…).enqueue(...)` for one-off overrides.
 
+## Logging
+
+`ardiq run` configures Python's `logging` for the process (`INFO` by default, `DEBUG`
+with `--verbose`/`-v`) and also initializes the Rust core's own logging at the same
+level. Worker lifecycle (`worker starting`, `worker stopped`) logs at `INFO`; task
+lifecycle logs at `DEBUG` (`task started`, `task succeeded`) through `WARN` (`task
+retry scheduled`) and `ERROR` (`task failed`, `task unknown`). Task args, kwargs,
+and results are never logged.
+
+Logging inside a task is just standard `logging` — it works the same for async tasks
+and for sync tasks run via `asyncio.to_thread`:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@app.task()
+async def send_email(to: str) -> None:
+    logger.info("sending email to %s", to)
+    ...
+```
+
+If you embed `Ardiq` outside the `ardiq` CLI, call `logging.basicConfig(...)` yourself
+(see `example.py`).
+
 ## Development
 
 ```console

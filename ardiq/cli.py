@@ -53,26 +53,34 @@ async def serve(
 ) -> None:
     """Run a worker until the queue drains (burst) or a signal stops it."""
     app.burst = burst
+    stop_reason: str | None = None
+
+    def _on_signal() -> None:
+        nonlocal stop_reason
+        stop_reason = "signal"
+        app.stop()
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, ValueError, RuntimeError):
-            loop.add_signal_handler(sig, app.stop)
+            loop.add_signal_handler(sig, _on_signal)
 
     if not quiet:
         from ardiq.banner import print_startup_banner
 
         print_startup_banner(app, app_path=app_path or "?", burst=burst)
+        logger.info(f"worker starting worker_id={app.worker_id}")
     else:
         logger.info(
-            "starting worker %s for %d task(s)%s",
-            app.worker_id,
-            len(app.tasks),
-            " [burst]" if burst else "",
+            f"worker starting worker_id={app.worker_id} queue={app.queue_name} "
+            f"concurrency={app.concurrency} prefetch={app.prefetch} burst={burst} "
+            f"tasks={len(app.tasks)} crons={len(app.crons)}"
         )
     try:
         await app.run()
     finally:
-        logger.info(f"worker {app.worker_id} stopped")
+        reason = stop_reason or ("burst" if burst else "unknown")
+        logger.info(f"worker stopped worker_id={app.worker_id} reason={reason}")
 
 
 @cli.command(help="Run a worker")
