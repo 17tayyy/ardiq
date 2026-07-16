@@ -1,6 +1,6 @@
 [project]
 name = "ardiq"
-version = "0.2.1"
+version = "0.2.2"
 description = "A fast distributed task queue with a Rust core and a Python API, backed by Redis streams."
 readme = "README.md"
 requires-python = ">=3.13"
