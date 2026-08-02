@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 # The `value` an aborted task reports, in an otherwise ordinary failure envelope.
@@ -31,6 +32,16 @@ class TaskResult(NamedTuple):
     def aborted(self) -> bool:
         """Whether the task was aborted instead of failing on its own."""
         return not self.success and self.value == ABORTED
+
+
+class State(SimpleNamespace):
+    """Worker-scoped resources, set up by an `@app.lifespan` hook."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(
+            f"app.state has no {name!r} — set it from an @app.lifespan hook, "
+            "which only runs inside app.run()"
+        )
 
 
 class TaskInfo(NamedTuple):

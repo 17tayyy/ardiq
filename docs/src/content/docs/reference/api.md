@@ -89,6 +89,8 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 | `await status(task_id)` | `str` | `queued` / `scheduled` / `running` / `complete` / `not_found`. |
 | `await info(task_id)` | `TaskInfo \| None` | Snapshot of an unfinished task, else `None`. |
 | `await abort(task_id)` | `bool` | Cancel a queued or running task; `False` if already finished. |
+| `lifespan(fn)` | decorator | Register worker startup/shutdown; see [Shared resources](/guides/lifespan/). |
+| `state` | `State` | Worker-scoped resources set by the lifespan hook. |
 
 ## `Task`
 
@@ -151,6 +153,16 @@ A `NamedTuple` describing a finished task.
 | `finish` | `int` | Epoch ms when execution finished. |
 | `duration_ms` | `int` | Property: `finish - start`. |
 | `aborted` | `bool` | Property: the task was cancelled rather than failing on its own. |
+
+## `State`
+
+A namespace holding worker-scoped resources, reachable as `app.state`. Populated by the
+`@app.lifespan` hook — either from the mapping it yields or by direct assignment. Reading
+an attribute that was never set raises `AttributeError` naming it.
+
+```python
+app.state.db          # set by the lifespan hook
+```
 
 ## `TaskInfo`
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -15,7 +16,7 @@ from typing import Any
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
 from ardiq.cron import _Schedule
-from ardiq.models import ABORTED, TaskInfo, TaskResult
+from ardiq.models import ABORTED, State, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
 # Outcome codes for the Rust core's executor protocol.
@@ -60,6 +61,8 @@ class Ardiq:
         self._registry: dict[str, _Registered] = {}
         self._crons: dict[str, tuple[_Schedule, str | None]] = {}
         self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
+        self._lifespan: Callable[[], AsyncIterator[Any]] | None = None
+        self.state = State()
         self._cron_poll_s = cron_poll_s
         config = {
             "redis_url": redis_url,
@@ -187,6 +190,35 @@ class Ardiq:
             return Task(self, task_name, fn, priority)
 
         return wrap
+
+    def lifespan(
+        self, fn: Callable[[], AsyncIterator[Any]]
+    ) -> Callable[[], AsyncIterator[Any]]:
+        """Register startup/shutdown for the worker: an async generator with one
+        `yield`. Set up before it, tear down after; yield a mapping to put its
+        entries on `app.state`. Runs inside `run()`, so enqueue-only processes
+        never pay for it."""
+        if not inspect.isasyncgenfunction(fn):
+            raise TypeError("@lifespan needs an async generator function (one yield)")
+        self._lifespan = fn
+        return fn
+
+    @contextlib.asynccontextmanager
+    async def _lifespan_scope(self) -> AsyncIterator[None]:
+        if self._lifespan is None:
+            yield
+            return
+        async with contextlib.asynccontextmanager(self._lifespan)() as deps:
+            if deps is not None:
+                if not isinstance(deps, Mapping):
+                    raise TypeError("@lifespan must yield a mapping or nothing")
+                for key, value in deps.items():
+                    setattr(self.state, key, value)
+            logger.info(f"lifespan started worker={self.worker_id}")
+            try:
+                yield
+            finally:
+                logger.info(f"lifespan stopping worker={self.worker_id}")
 
     async def _enqueue(
         self,
@@ -358,23 +390,24 @@ class Ardiq:
 
     async def run(self) -> None:
         """Run the worker loop until `stop()` (or the queue drains, in burst mode)."""
-        # Cron and abort watching need a worker that sticks around, so burst
-        # (which drains and exits) skips both. Aborts are still honored there:
-        # the core checks for one before handing a task over.
-        if self.burst:
-            await self._core.run(self._execute)
-            return
-        background = [asyncio.ensure_future(self._abort_watcher())]
-        if self._crons:
-            background.append(asyncio.ensure_future(self._cron_scheduler()))
-        try:
-            await self._core.run(self._execute)
-        finally:
-            for task in background:
-                task.cancel()
-            for task in background:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+        async with self._lifespan_scope():
+            # Cron and abort watching need a worker that sticks around, so burst
+            # (which drains and exits) skips both. Aborts are still honored there:
+            # the core checks for one before handing a task over.
+            if self.burst:
+                await self._core.run(self._execute)
+                return
+            background = [asyncio.ensure_future(self._abort_watcher())]
+            if self._crons:
+                background.append(asyncio.ensure_future(self._cron_scheduler()))
+            try:
+                await self._core.run(self._execute)
+            finally:
+                for task in background:
+                    task.cancel()
+                for task in background:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
     def stop(self) -> None:
         """Signal the worker loop to shut down."""

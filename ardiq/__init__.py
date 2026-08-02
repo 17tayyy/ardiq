@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from ardiq._core import ArdiqCore as ArdiqCore  # re-exported for tests/tooling
 from ardiq.app import Ardiq
-from ardiq.models import TaskInfo, TaskResult
+from ardiq.models import State, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
-__all__ = ["Ardiq", "Job", "Task", "TaskInfo", "TaskResult"]
+__all__ = ["Ardiq", "Job", "State", "Task", "TaskInfo", "TaskResult"]

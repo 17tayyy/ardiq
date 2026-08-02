@@ -155,6 +155,33 @@ asyncio.run(main())
 Or run the whole thing in one process with `python example.py`, which enqueues a
 few tasks and processes them in burst mode.
 
+## Shared resources (lifespan)
+
+Tasks often need something expensive that should be built once per worker, not
+per task — a database pool, an HTTP client. `@app.lifespan` registers an async
+generator that sets up before the loop starts and tears down after it stops:
+
+```python
+@app.lifespan
+async def lifespan():
+    pool = await asyncpg.create_pool(DSN)
+    yield {"db": pool}          # entries land on app.state
+    await pool.close()
+
+
+@app.task()
+async def count_users() -> int:
+    return await app.state.db.fetchval("select count(*) from users")
+```
+
+Yield a mapping to populate `app.state`, or yield nothing and assign
+`app.state.db = ...` yourself. Either way `app.state` is available to async and
+sync tasks alike.
+
+The hook only runs inside `app.run()`, so a process that just enqueues never
+opens the pool. Teardown runs even if the loop fails, and an exception during
+setup stops the worker before it takes any work.
+
 ## Aborting tasks
 
 `job.abort()` cancels a task whether it is waiting in the queue or already
