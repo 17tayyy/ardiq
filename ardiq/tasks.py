@@ -32,6 +32,10 @@ class Job:
         """Metadata while the task is unfinished, else `None`. See `Ardiq.info`."""
         return await self.app.info(self.id)
 
+    async def abort(self) -> bool:
+        """Abort the task; `False` if it already finished. See `Ardiq.abort`."""
+        return await self.app.abort(self.id)
+
 
 class Task:
     """A registered task. Call it to run inline, or `.enqueue` to dispatch."""

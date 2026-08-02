@@ -25,10 +25,12 @@ and runs that app.
 |---------------|-------------|
 | `--burst`, `-b` | Process everything currently queued, then exit. |
 | `--verbose`, `-v` | DEBUG-level logging, including the Rust core's logs. |
+| `--quiet`, `-q` | Skip the startup banner and log a single plain line instead. |
 
 ```console
 $ ardiq run example:app --verbose
 $ ardiq run example:app --burst
+$ ardiq run example:app --quiet     # for CI and log collectors
 ```
 
 :::note
@@ -87,6 +89,43 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+## Logging
+
+`ardiq run` configures Python's `logging` for the process — `INFO` by default, `DEBUG`
+with `--verbose` — and initializes the Rust core's logging at the same level, so both
+surface on stderr.
+
+| Level | What you see |
+|---|---|
+| `INFO` | `worker starting` and `worker stopped` (with a `reason` of `signal`, `burst` or `unknown`), plus tasks aborted before they ran. |
+| `DEBUG` | `task started` and `task succeeded`, with `duration_ms`. |
+| `WARN` | `task retry scheduled` (with `delay_ms`) and `task aborted` mid-flight. |
+| `ERROR` | `task failed` after the last retry, `task unknown`, and internal errors. |
+
+Every task line carries the same key-value fields — `id=`, `name=`, `worker=`, `try=` —
+so they're easy to grep or parse. Arguments, keyword arguments and return values are
+**never** logged.
+
+### Logging from inside a task
+
+Task bodies use standard `logging`, with no special setup and nothing intercepted or
+swallowed. This works the same in async tasks and in sync tasks running in a thread:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@app.task()
+async def send_email(to: str) -> None:
+    logger.info("sending email to %s", to)
+```
+
+If you embed `Ardiq` outside the `ardiq` CLI (see [Running in code](#running-in-code)),
+call `logging.basicConfig(...)` yourself — otherwise Python's default configuration drops
+anything below `WARNING`.
 
 ## Concurrency & scaling
 

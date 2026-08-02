@@ -88,6 +88,7 @@ export default defineConfig({
             { label: "Enqueuing & scheduling", slug: "guides/enqueuing" },
             { label: "Recurring tasks", slug: "guides/recurring" },
             { label: "Results & introspection", slug: "guides/results" },
+            { label: "Aborting tasks", slug: "guides/aborting" },
             { label: "Running a worker", slug: "guides/worker" },
             { label: "Serialization", slug: "guides/serialization" },
           ],

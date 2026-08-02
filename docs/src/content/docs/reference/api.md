@@ -88,6 +88,7 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 | `await result(task_id, timeout=None)` | `TaskResult \| None` | Fetch a result; with `timeout` (s) waits, else returns now-or-`None`. |
 | `await status(task_id)` | `str` | `queued` / `scheduled` / `running` / `complete` / `not_found`. |
 | `await info(task_id)` | `TaskInfo \| None` | Snapshot of an unfinished task, else `None`. |
+| `await abort(task_id)` | `bool` | Cancel a queued or running task; `False` if already finished. |
 
 ## `Task`
 
@@ -134,6 +135,7 @@ An immutable handle to an enqueued task — just the app plus an id.
 | `await result(timeout=None)` | `TaskResult \| None` | Fetch the result; with `timeout` (s) waits, raising `TimeoutError`. |
 | `await status()` | `str` | Current status. |
 | `await info()` | `TaskInfo \| None` | Snapshot if unfinished, else `None`. |
+| `await abort()` | `bool` | Cancel the task; `False` if already finished. See [Aborting tasks](/guides/aborting/). |
 
 ## `TaskResult`
 
@@ -148,6 +150,7 @@ A `NamedTuple` describing a finished task.
 | `start` | `int` | Epoch ms when execution started. |
 | `finish` | `int` | Epoch ms when execution finished. |
 | `duration_ms` | `int` | Property: `finish - start`. |
+| `aborted` | `bool` | Property: the task was cancelled rather than failing on its own. |
 
 ## `TaskInfo`
 

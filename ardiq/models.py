@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+# The `value` an aborted task reports, in an otherwise ordinary failure envelope.
+ABORTED = "aborted"
+
 
 class TaskResult(NamedTuple):
     """A decoded result envelope. On failure, `value` holds the error repr.
@@ -23,6 +26,11 @@ class TaskResult(NamedTuple):
     def duration_ms(self) -> int:
         """Execution time in ms (`finish - start`)."""
         return self.finish - self.start
+
+    @property
+    def aborted(self) -> bool:
+        """Whether the task was aborted instead of failing on its own."""
+        return not self.success and self.value == ABORTED
 
 
 class TaskInfo(NamedTuple):

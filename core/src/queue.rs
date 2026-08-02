@@ -46,6 +46,7 @@ pub struct Queue {
     stream_to_priority: HashMap<String, String>,
     publish_task: Script,
     publish_delayed: Script,
+    abort_task: Script,
 }
 
 impl Queue {
@@ -67,6 +68,7 @@ impl Queue {
             stream_to_priority,
             publish_task: Script::new(include_str!("scripts/publish_task.lua")),
             publish_delayed: Script::new(include_str!("scripts/publish_delayed.lua")),
+            abort_task: Script::new(include_str!("scripts/abort_task.lua")),
         }
     }
 
@@ -89,6 +91,9 @@ impl Queue {
     fn retry_key(&self, task_id: &str) -> String {
         format!("{}:task:retry:{task_id}", self.prefix)
     }
+    fn abort_key(&self, task_id: &str) -> String {
+        format!("{}:task:abort:{task_id}", self.prefix)
+    }
     fn results_set(&self) -> String {
         format!("{}:index:results", self.prefix)
     }
@@ -100,6 +105,9 @@ impl Queue {
     }
     pub fn result_channel(&self, task_id: &str) -> String {
         format!("{}:result:channel:{task_id}", self.prefix)
+    }
+    pub fn abort_channel(&self) -> String {
+        format!("{}:abort:channel", self.prefix)
     }
 
     pub async fn create_groups<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<()> {
@@ -293,11 +301,50 @@ impl Queue {
         &self,
         conn: &mut C,
         task_id: &str,
-    ) -> RedisResult<Option<Vec<u8>>> {
-        redis::cmd("GET")
+    ) -> RedisResult<(Option<Vec<u8>>, bool)> {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.cmd("GET").arg(self.task_key(task_id));
+        pipe.cmd("EXISTS").arg(self.abort_key(task_id));
+        let (payload, aborted): (Option<Vec<u8>>, i64) = pipe.query_async(conn).await?;
+        Ok((payload, aborted == 1))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn abort<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+        result: &[u8],
+        ttl: ResultTtl,
+        marker_ttl_ms: i64,
+        now_ms: i64,
+    ) -> RedisResult<bool> {
+        let result_ttl_ms = match ttl {
+            ResultTtl::None => 0,
+            ResultTtl::Forever => -1,
+            ResultTtl::Millis(ms) => ms,
+        };
+        let mut invocation = self.abort_task.prepare_invoke();
+        invocation
+            .arg(self.result_key(task_id))
             .arg(self.task_key(task_id))
-            .query_async(conn)
-            .await
+            .arg(self.abort_key(task_id))
+            .arg(self.retry_key(task_id))
+            .arg(self.running_set())
+            .arg(self.results_set())
+            .arg(task_id)
+            .arg(result)
+            .arg(marker_ttl_ms)
+            .arg(result_ttl_ms)
+            .arg(self.result_channel(task_id))
+            .arg(self.abort_channel())
+            .arg(now_ms);
+        for priority in &self.priorities {
+            invocation.arg(self.delayed_key(priority));
+        }
+        let accepted: i64 = invocation.invoke_async(conn).await?;
+        Ok(accepted == 1)
     }
 
     pub async fn complete<C: ConnectionLike>(
@@ -324,6 +371,7 @@ impl Queue {
         pipe.cmd("DEL")
             .arg(self.retry_key(&msg.task_id))
             .arg(self.task_key(&msg.task_id))
+            .arg(self.abort_key(&msg.task_id))
             .ignore();
         match ttl {
             ResultTtl::None => {}
@@ -404,7 +452,10 @@ impl Queue {
             .arg(self.running_set())
             .arg(&msg.task_id)
             .ignore();
-        pipe.cmd("DEL").arg(self.retry_key(&msg.task_id)).ignore();
+        pipe.cmd("DEL")
+            .arg(self.retry_key(&msg.task_id))
+            .arg(self.abort_key(&msg.task_id))
+            .ignore();
         pipe.query_async(conn).await
     }
 

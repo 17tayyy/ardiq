@@ -27,6 +27,7 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 - **Automatic retries** with quadratic backoff, configurable per task
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
+- **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
 - **Sync & async tasks** — blocking sync functions run in a thread pool
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
 
@@ -153,6 +154,39 @@ asyncio.run(main())
 
 Or run the whole thing in one process with `python example.py`, which enqueues a
 few tasks and processes them in burst mode.
+
+## Aborting tasks
+
+`job.abort()` cancels a task whether it is waiting in the queue or already
+running on some worker:
+
+```python
+job = await slow_report.options(delay_ms=60_000).enqueue()
+
+if await job.abort():                # False if it already finished
+    result = await job.result(timeout=5)
+    print(result.aborted)            # True
+    print(result.success)            # False
+```
+
+An aborted task ends as an ordinary failed `TaskResult` with `aborted` set, so
+it never retries and `result(timeout=)` returns as soon as it settles. What
+happens depends on where the task is when you call it:
+
+| Where the task is | What abort does |
+|---|---|
+| Waiting on a delay or schedule | Dropped and finalized immediately. |
+| Queued for pickup | The next worker to reach it skips it instead of running it. |
+| Running | The worker holding it cancels it, within about a millisecond. |
+
+Cancelling a **running** task needs a long-running worker: the worker subscribes
+to the queue's abort channel while it runs, which `--burst` skips. Aborts are
+still honored under burst, just not mid-flight.
+
+Because cancellation is `asyncio` cancellation, a **sync** task can't be
+interrupted mid-call — the worker stops waiting on it and reports it aborted,
+but the thread runs to completion. Async tasks are cancelled at their next
+`await`, so a task that swallows `CancelledError` keeps going.
 
 ## Recurring tasks
 

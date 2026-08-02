@@ -44,7 +44,7 @@ async def test_retry_mechanism(redis, make_core, poll, retry_after_ms, min_gap, 
     tries_seen: list[int] = []
     stamps: list[float] = []
 
-    async def executor(task_id, payload, tries):
+    async def executor(task_id, payload, tries, aborted):
         stamps.append(time.monotonic())
         tries_seen.append(tries)
         if len(tries_seen) < 2:

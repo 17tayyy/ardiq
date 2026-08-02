@@ -25,7 +25,13 @@ pub struct ExecOutcome {
 
 #[async_trait::async_trait]
 pub trait TaskExecutor: Send + Sync {
-    async fn execute(&self, task_id: String, payload: Vec<u8>, tries: i64) -> ExecOutcome;
+    async fn execute(
+        &self,
+        task_id: String,
+        payload: Vec<u8>,
+        tries: i64,
+        aborted: bool,
+    ) -> ExecOutcome;
 }
 
 #[derive(Clone, Debug)]
@@ -240,7 +246,8 @@ impl Worker {
         tries: i64,
         conn: &mut ConnectionManager,
     ) -> redis::RedisResult<()> {
-        let payload = match self.queue.fetch_payload(conn, &msg.task_id).await? {
+        let (payload, aborted) = self.queue.fetch_payload(conn, &msg.task_id).await?;
+        let payload = match payload {
             Some(payload) => payload,
             None => {
                 tracing::warn!("ardiq task {} expired before running", msg.task_id);
@@ -250,7 +257,7 @@ impl Worker {
 
         let exec = self
             .executor
-            .execute(msg.task_id.clone(), payload, tries)
+            .execute(msg.task_id.clone(), payload, tries, aborted)
             .await;
 
         match exec.outcome {

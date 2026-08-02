@@ -14,8 +14,10 @@ use redis::aio::ConnectionManager;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
-use crate::queue::{now_ms, Queue};
+use crate::queue::{now_ms, Queue, ResultTtl};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
+
+const DEFAULT_ABORT_MARKER_MS: i64 = 300_000;
 
 struct PyExecutor {
     callback: Py<PyAny>,
@@ -24,10 +26,19 @@ struct PyExecutor {
 
 #[async_trait::async_trait]
 impl TaskExecutor for PyExecutor {
-    async fn execute(&self, task_id: String, payload: Vec<u8>, tries: i64) -> ExecOutcome {
+    async fn execute(
+        &self,
+        task_id: String,
+        payload: Vec<u8>,
+        tries: i64,
+        aborted: bool,
+    ) -> ExecOutcome {
         let future = Python::attach(|py| -> PyResult<_> {
             let bytes = PyBytes::new(py, &payload);
-            let coro = self.callback.bind(py).call1((task_id, bytes, tries))?;
+            let coro = self
+                .callback
+                .bind(py)
+                .call1((task_id, bytes, tries, aborted))?;
             pyo3_async_runtimes::into_future_with_locals(&self.locals, coro)
         });
         let future = match future {
@@ -86,6 +97,7 @@ struct ArdiqCore {
     config: WorkerConfig,
     cancel: CancellationToken,
     conn: Arc<OnceCell<ConnectionManager>>,
+    aborts: Arc<OnceCell<async_channel::Receiver<String>>>,
 }
 
 #[pymethods]
@@ -157,6 +169,7 @@ impl ArdiqCore {
             config: worker_config,
             cancel: CancellationToken::new(),
             conn: Arc::new(OnceCell::new()),
+            aborts: Arc::new(OnceCell::new()),
         })
     }
 
@@ -299,6 +312,54 @@ impl ArdiqCore {
         })
     }
 
+    #[pyo3(signature = (task_id, result))]
+    fn abort<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+        result: Vec<u8>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        let result_ttl_ms = self.config.result_ttl_ms;
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+
+            let marker_ttl_ms = if result_ttl_ms > 0 {
+                result_ttl_ms
+            } else {
+                DEFAULT_ABORT_MARKER_MS
+            };
+            queue
+                .abort(
+                    &mut conn,
+                    &task_id,
+                    &result,
+                    ResultTtl::from_ms(result_ttl_ms),
+                    marker_ttl_ms,
+                    now_ms(),
+                )
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    #[pyo3(signature = (timeout_ms))]
+    fn next_abort<'py>(&self, py: Python<'py>, timeout_ms: u64) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let aborts = self.aborts.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let rx = abort_stream(&aborts, &client, queue.abort_channel()).await?;
+            let dur = std::time::Duration::from_millis(timeout_ms);
+            Ok(tokio::time::timeout(dur, rx.recv())
+                .await
+                .ok()
+                .and_then(Result::ok))
+        })
+    }
+
     fn status<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
         let queue = self.queue.clone();
         let conn = self.conn.clone();
@@ -360,6 +421,36 @@ impl ArdiqCore {
     fn result_ttl_ms(&self) -> i64 {
         self.config.result_ttl_ms
     }
+}
+
+async fn abort_stream(
+    cell: &OnceCell<async_channel::Receiver<String>>,
+    client: &redis::Client,
+    channel: String,
+) -> PyResult<async_channel::Receiver<String>> {
+    let rx = cell
+        .get_or_try_init(|| async {
+            let mut pubsub = client.get_async_pubsub().await?;
+            pubsub.subscribe(&channel).await?;
+            let (tx, rx) = async_channel::unbounded();
+            tokio::spawn(async move {
+                let mut stream = pubsub.on_message();
+                while let Some(msg) = stream.next().await {
+                    match msg.get_payload::<String>() {
+                        Ok(task_id) => {
+                            if tx.send(task_id).await.is_err() {
+                                break; // no receivers left
+                            }
+                        }
+                        Err(err) => tracing::warn!("ardiq unreadable abort message: {err}"),
+                    }
+                }
+            });
+            Ok::<_, redis::RedisError>(rx)
+        })
+        .await
+        .map_err(to_py_err)?;
+    Ok(rx.clone())
 }
 
 async fn shared_conn(

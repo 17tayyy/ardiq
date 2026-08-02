@@ -15,12 +15,14 @@ from typing import Any
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
 from ardiq.cron import _Schedule
-from ardiq.models import TaskInfo, TaskResult
+from ardiq.models import ABORTED, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
 # Outcome codes for the Rust core's executor protocol.
 SUCCESS, FAILURE, RETRY = 0, 1, 2
 DEFAULT_MAX_RETRIES = 3
+
+ABORT_WAIT_MS = 500
 
 logger = logging.getLogger("ardiq")
 
@@ -57,6 +59,7 @@ class Ardiq:
         self._loads = deserializer or _default_loads
         self._registry: dict[str, _Registered] = {}
         self._crons: dict[str, tuple[_Schedule, str | None]] = {}
+        self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
         self._cron_poll_s = cron_poll_s
         config = {
             "redis_url": redis_url,
@@ -226,6 +229,20 @@ class Ardiq:
                     logger.exception("ardiq cron scheduling failed for %r", cron_name)
             await asyncio.sleep(self._cron_poll_s)
 
+    async def _abort_watcher(self) -> None:
+        """Cancel in-flight tasks that someone asked to abort. The core keeps one
+        subscription per queue and hands ids over as they arrive."""
+        while True:
+            try:
+                task_id = await self._core.next_abort(ABORT_WAIT_MS)
+            except Exception:
+                logger.exception("ardiq abort watcher failed")
+                await asyncio.sleep(1.0)
+                continue
+            running = self._running.get(task_id) if task_id else None
+            if running is not None and not running.done():
+                running.cancel()
+
     def _pack(self, fn_name: str, args: tuple, kwargs: dict) -> bytes:
         return self._dumps({"f": fn_name, "a": list(args), "k": kwargs, "t": _now_ms()})
 
@@ -257,7 +274,7 @@ class Ardiq:
         )
 
     async def _execute(
-        self, task_id: str, payload: bytes, tries: int
+        self, task_id: str, payload: bytes, tries: int, aborted: bool = False
     ) -> tuple[int, bytes, int]:
         """The core's per-task callback. Returns (outcome, result_bytes, retry_ms)."""
         data = self._loads(payload)
@@ -265,6 +282,14 @@ class Ardiq:
         worker_id = self.worker_id
         enqueue_time = int(data.get("t", 0))
         start = _now_ms()
+
+        if aborted:
+            logger.info(
+                f"task aborted id={task_id} name={task_name!r} worker={worker_id} "
+                f"try={tries} duration_ms=0"
+            )
+            env = self._envelope(False, ABORTED, tries, enqueue_time, start)
+            return FAILURE, env, 0
 
         reg = self._registry.get(task_name)
         if reg is None:
@@ -280,6 +305,10 @@ class Ardiq:
             f"task started id={task_id} name={task_name!r} worker={worker_id} try={tries}"
         )
 
+        current = asyncio.current_task()
+        if current is not None:
+            self._running[task_id] = current
+
         try:
             if reg.is_async:
                 coro = reg.fn(*data["a"], **data["k"])
@@ -289,6 +318,16 @@ class Ardiq:
                 result = await asyncio.wait_for(coro, reg.timeout)
             else:
                 result = await coro
+        except asyncio.CancelledError:
+            if current is not None:
+                current.uncancel()  # we handled it; let the task finish normally
+            duration_ms = _now_ms() - start
+            logger.warning(
+                f"task aborted id={task_id} name={task_name!r} worker={worker_id} "
+                f"try={tries} duration_ms={duration_ms}"
+            )
+            env = self._envelope(False, ABORTED, tries, enqueue_time, start)
+            return FAILURE, env, 0
         except Exception as exc:
             if isinstance(exc, TimeoutError) and reg.timeout is not None:
                 err = f"timed out after {reg.timeout}s"
@@ -307,6 +346,8 @@ class Ardiq:
                 f"try={tries} duration_ms={duration_ms} error={err}"
             )
             return FAILURE, self._envelope(False, err, tries, enqueue_time, start), 0
+        finally:
+            self._running.pop(task_id, None)
 
         duration_ms = _now_ms() - start
         logger.debug(
@@ -317,17 +358,23 @@ class Ardiq:
 
     async def run(self) -> None:
         """Run the worker loop until `stop()` (or the queue drains, in burst mode)."""
-        # Cron makes no sense under burst (it drains and exits), so skip it there.
-        if not self._crons or self.burst:
+        # Cron and abort watching need a worker that sticks around, so burst
+        # (which drains and exits) skips both. Aborts are still honored there:
+        # the core checks for one before handing a task over.
+        if self.burst:
             await self._core.run(self._execute)
             return
-        scheduler = asyncio.ensure_future(self._cron_scheduler())
+        background = [asyncio.ensure_future(self._abort_watcher())]
+        if self._crons:
+            background.append(asyncio.ensure_future(self._cron_scheduler()))
         try:
             await self._core.run(self._execute)
         finally:
-            scheduler.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await scheduler
+            for task in background:
+                task.cancel()
+            for task in background:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     def stop(self) -> None:
         """Signal the worker loop to shut down."""
@@ -350,6 +397,18 @@ class Ardiq:
             raise TimeoutError(f"no result for {task_id!r} within {timeout}s")
 
         return self._unpack(raw)
+
+    async def abort(self, task_id: str) -> bool:
+        """Abort a task: stop it if a worker is running it, and make sure it never
+        starts otherwise. Returns `False` if it already finished or is unknown.
+
+        The task ends as a failed `TaskResult` with `aborted` set. A task waiting
+        on a delay is finalized immediately; one already queued for pickup is
+        dropped when a worker reaches it. Sync tasks can't be interrupted
+        mid-call — the worker stops waiting, but the thread runs to completion.
+        """
+        env = self._envelope(False, ABORTED, 0, 0, _now_ms())
+        return await self._core.abort(task_id, env)
 
     async def status(self, task_id: str) -> str:
         """A task's status: 'queued', 'scheduled', 'running', 'complete', or 'not_found'."""
