@@ -5,7 +5,7 @@ description: Install ArdiQ, start Redis, write your first task, and run a worker
 
 ## Requirements
 
-- **Python 3.13+**
+- **Python 3.12+**
 - A **Redis** server (ArdiQ uses Redis streams as its broker and result store).
 
 ## Install

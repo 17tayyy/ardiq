@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     services:
       redis:
         image: redis:7-alpine
@@ -25,7 +29,9 @@ jobs:
         with:
           enable-cache: true
       - name: Sync (builds the Rust extension + dev deps)
-        run: uv sync --dev
+        run: uv sync --dev --python ${{ matrix.python-version }}
+      - name: Show interpreter  # so the matrix can't be silently wrong
+        run: uv run python -V
       - name: Lint
         run: uv run ruff check .
       - name: Type-check

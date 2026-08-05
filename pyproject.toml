@@ -3,7 +3,7 @@ name = "ardiq"
 version = "0.2.2"
 description = "A fast distributed task queue with a Rust core and a Python API, backed by Redis streams."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "17tayyy", email = "oscarfdst@proton.me" }]
 keywords = ["task-queue", "redis", "rust", "async", "asyncio", "distributed", "jobs", "worker"]
@@ -11,6 +11,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
     "Framework :: AsyncIO",
@@ -45,7 +46,7 @@ include = ["ardiq/py.typed"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -66,7 +67,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.environment]
-python-version = "3.13"
+python-version = "3.12"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
