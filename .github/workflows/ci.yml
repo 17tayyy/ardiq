@@ -28,8 +28,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - name: Pin the matrix interpreter
+        # Repointing .python-version is what makes it stick: every later `uv run`
+        # re-resolves against that file, so a --python flag on sync alone is lost.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv python pin ${{ matrix.python-version }}
       - name: Sync (builds the Rust extension + dev deps)
-        run: uv sync --dev --python ${{ matrix.python-version }}
+        run: uv sync --dev
       - name: Show interpreter  # so the matrix can't be silently wrong
         run: uv run python -V
       - name: Lint
