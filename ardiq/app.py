@@ -16,12 +16,14 @@ from typing import Any
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
 from ardiq.cron import _Schedule
-from ardiq.models import ABORTED, State, TaskInfo, TaskResult
+from ardiq.models import ABORTED, ErrorContext, State, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
 # Outcome codes for the Rust core's executor protocol.
 SUCCESS, FAILURE, RETRY = 0, 1, 2
 DEFAULT_MAX_RETRIES = 3
+
+ErrorHook = Callable[[ErrorContext], Any]
 
 ABORT_WAIT_MS = 500
 
@@ -62,6 +64,7 @@ class Ardiq:
         self._crons: dict[str, tuple[_Schedule, str | None]] = {}
         self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
         self._lifespan: Callable[[], AsyncIterator[Any]] | None = None
+        self._error_hooks: list[ErrorHook] = []
         self.state = State()
         self._cron_poll_s = cron_poll_s
         config = {
@@ -220,6 +223,28 @@ class Ardiq:
             finally:
                 logger.info(f"lifespan stopping worker={self.worker_id}")
 
+    def on_error(self, fn: ErrorHook) -> ErrorHook:
+        """Register a hook run whenever an attempt goes wrong, before ArdiQ
+        decides between retrying and failing. This is where a reporter like
+        Sentry goes.
+
+        The hook takes an `ErrorContext` and may be sync or async; register as
+        many as you like and all of them run. One that raises is logged and
+        never changes the task's outcome. It fires on timeouts and on every
+        retry, but not on abort. Keep it quick — it runs on the worker's loop.
+        """
+        self._error_hooks.append(fn)
+        return fn
+
+    async def _fire_error_hooks(self, ctx: ErrorContext) -> None:
+        for hook in self._error_hooks:
+            try:
+                outcome = hook(ctx)
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception:
+                logger.exception("ardiq on_error hook failed for %r", ctx.name)
+
     def ref(self, name: str, *, priority: str | None = None) -> Task:
         """A handle to a task registered somewhere else — same `.enqueue` and
         `.options` as a local task, but no function to call. Use it to reach a
@@ -344,12 +369,16 @@ class Ardiq:
 
         reg = self._registry.get(task_name)
         if reg is None:
+            err = f"unknown task {task_name!r}"
             logger.error(
                 f"task unknown id={task_id} name={task_name!r} worker={worker_id} try={tries}"
             )
-            env = self._envelope(
-                False, f"unknown task {task_name!r}", tries, enqueue_time, start
+            # No exception was raised here, but a worker that doesn't know a task
+            # is a deployment mismatch — exactly what a reporter wants to see.
+            await self._fire_error_hooks(
+                ErrorContext(task_name, task_id, LookupError(err), tries, False)
             )
+            env = self._envelope(False, err, tries, enqueue_time, start)
             return FAILURE, env, 0
 
         logger.debug(
@@ -360,6 +389,8 @@ class Ardiq:
         if current is not None:
             self._running[task_id] = current
 
+        result = None
+        error: Exception | None = None
         try:
             if reg.is_async:
                 coro = reg.fn(*data["a"], **data["k"])
@@ -380,27 +411,39 @@ class Ardiq:
             env = self._envelope(False, ABORTED, tries, enqueue_time, start)
             return FAILURE, env, 0
         except Exception as exc:
-            if isinstance(exc, TimeoutError) and reg.timeout is not None:
+            error = exc
+        finally:
+            # Deregistered before the hooks run below: an abort landing while a
+            # hook awaits would otherwise cancel us on the way out.
+            self._running.pop(task_id, None)
+
+        duration_ms = _now_ms() - start
+
+        if error is not None:
+            if isinstance(error, TimeoutError) and reg.timeout is not None:
                 err = f"timed out after {reg.timeout}s"
             else:
-                err = repr(exc)
-            duration_ms = _now_ms() - start
+                err = repr(error)
+
             if tries <= reg.max_retries:
-                delay_ms = reg.backoff_ms or tries * tries * 1000
                 logger.warning(
                     f"task retry scheduled id={task_id} name={task_name!r} worker={worker_id} "
-                    f"try={tries} delay_ms={delay_ms} error={err}"
+                    f"try={tries} delay_ms={reg.backoff_ms or tries * tries * 1000} error={err}"
+                )
+                await self._fire_error_hooks(
+                    ErrorContext(task_name, task_id, error, tries, True)
                 )
                 return RETRY, b"", reg.backoff_ms  # 0 = core's default backoff
+
             logger.error(
                 f"task failed id={task_id} name={task_name!r} worker={worker_id} "
                 f"try={tries} duration_ms={duration_ms} error={err}"
             )
+            await self._fire_error_hooks(
+                ErrorContext(task_name, task_id, error, tries, False)
+            )
             return FAILURE, self._envelope(False, err, tries, enqueue_time, start), 0
-        finally:
-            self._running.pop(task_id, None)
 
-        duration_ms = _now_ms() - start
         logger.debug(
             f"task succeeded id={task_id} name={task_name!r} worker={worker_id} "
             f"try={tries} duration_ms={duration_ms}"

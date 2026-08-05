@@ -34,6 +34,20 @@ class TaskResult(NamedTuple):
         return not self.success and self.value == ABORTED
 
 
+class ErrorContext(NamedTuple):
+    """What an `@app.on_error` hook is handed when an attempt goes wrong.
+
+    `tries` is the attempt that just failed (1-based); `will_retry` says whether
+    another one is coming.
+    """
+
+    name: str
+    task_id: str
+    exc: BaseException
+    tries: int
+    will_retry: bool
+
+
 class State(SimpleNamespace):
     """Worker-scoped resources, set up by an `@app.lifespan` hook."""
 
