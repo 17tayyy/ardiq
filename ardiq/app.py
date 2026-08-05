@@ -220,9 +220,23 @@ class Ardiq:
             finally:
                 logger.info(f"lifespan stopping worker={self.worker_id}")
 
+    def ref(self, name: str, *, priority: str | None = None) -> Task:
+        """A handle to a task registered somewhere else — same `.enqueue` and
+        `.options` as a local task, but no function to call. Use it to reach a
+        worker's tasks without importing (or registering) them here."""
+        return Task(self, name, None, priority)
+
+    async def send(self, name: str, *args: Any, **kwargs: Any) -> Job:
+        """Enqueue a task by name, with no local registration. Shorthand for
+        `ref(name).enqueue(...)`; use `ref` when you need enqueue options.
+
+        Nothing checks the name here — an unknown one fails on the worker.
+        """
+        return await self._enqueue(name, args, kwargs)
+
     async def _enqueue(
         self,
-        task: Task,
+        name: str,
         args: tuple,
         kwargs: dict,
         *,
@@ -233,18 +247,23 @@ class Ardiq:
         expire_ms: int = 0,
     ) -> Job:
         job_id = task_id or uuid.uuid4().hex
-        payload = self._pack(task.name, args, kwargs)
+        payload = self._pack(name, args, kwargs)
         await self._core.enqueue(
-            job_id, payload, priority or task.priority, delay_ms, schedule_ms, expire_ms
+            job_id, payload, priority, delay_ms, schedule_ms, expire_ms
         )
         return Job(self, job_id)
 
     async def _enqueue_cron(
         self, name: str, fire_ms: int, priority: str | None
     ) -> None:
-        payload = self._pack(name, (), {})
-        await self._core.enqueue(
-            f"cron:{name}:{fire_ms}", payload, priority, 0, fire_ms, 0
+        # Deterministic id: re-staging the same occurrence is a no-op in Redis.
+        await self._enqueue(
+            name,
+            (),
+            {},
+            task_id=f"cron:{name}:{fire_ms}",
+            priority=priority,
+            schedule_ms=fire_ms,
         )
 
     async def _cron_scheduler(self) -> None:

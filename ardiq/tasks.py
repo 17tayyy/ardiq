@@ -38,10 +38,14 @@ class Job:
 
 
 class Task:
-    """A registered task. Call it to run inline, or `.enqueue` to dispatch."""
+    """A registered task. Call it to run inline, or `.enqueue` to dispatch.
+
+    `Ardiq.ref` builds one with no local function — a handle to a task that
+    lives in another process, enqueueable but not callable.
+    """
 
     def __init__(
-        self, app: Ardiq, name: str, fn: Callable[..., Any], priority: str | None
+        self, app: Ardiq, name: str, fn: Callable[..., Any] | None, priority: str | None
     ):
         self.app = app
         self.name = name
@@ -49,11 +53,13 @@ class Task:
         self.priority = priority
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self.fn is None:
+            raise TypeError(f"task {self.name!r} is a reference, not a local function")
         return self.fn(*args, **kwargs)
 
     async def enqueue(self, *args: Any, **kwargs: Any) -> Job:
         """Dispatch the task with these args; returns a `Job` handle."""
-        return await self.app._enqueue(self, args, kwargs)
+        return await self.app._enqueue(self.name, args, kwargs, priority=self.priority)
 
     def options(
         self,
@@ -81,11 +87,11 @@ class _BoundTask:
 
     async def enqueue(self, *args: Any, **kwargs: Any) -> Job:
         return await self.task.app._enqueue(
-            self.task,
+            self.task.name,
             args,
             kwargs,
             task_id=self.task_id,
-            priority=self.priority,
+            priority=self.priority or self.task.priority,
             delay_ms=self.delay_ms,
             schedule_ms=self.schedule_ms,
             expire_ms=self.expire_ms,
