@@ -75,7 +75,8 @@ async def charge(order_id: int) -> None:
 ```
 
 A task that still fails after its last retry stores a failed `TaskResult` whose `value` is
-the error's `repr`.
+the error's `repr`. To pick the delay from inside the task, or to report failures as they
+happen, see [Handling failures](/guides/errors/).
 
 ## Timeouts
 

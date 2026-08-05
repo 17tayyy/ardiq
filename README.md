@@ -24,7 +24,9 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 - **Priority queues** — higher-priority tasks are consumed first
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
 - **Cron & recurring** tasks (`@app.cron`) — 5-field cron (UTC) or `every=` intervals
-- **Automatic retries** with quadratic backoff, configurable per task
+- **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
+- **Enqueue by name** (`app.send("task", ...)`) — producers never import the task module
+- **Error hooks** (`@app.on_error`) — send every failed attempt to Sentry or your own reporter
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
 - **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
@@ -154,6 +156,79 @@ asyncio.run(main())
 
 Or run the whole thing in one process with `python example.py`, which enqueues a
 few tasks and processes them in burst mode.
+
+## Enqueuing by name
+
+The side that enqueues doesn't have to be the side that runs. `app.send` puts a
+task on the queue by name, so a web service can dispatch work without importing
+the task module — or its dependencies — at all:
+
+```python
+from ardiq import Ardiq
+from fastapi import FastAPI
+
+api = FastAPI()
+queue = Ardiq(redis_url="redis://localhost:6379", queue_name="example")
+
+
+@api.post("/reports")
+async def create_report(user_id: int):
+    job = await queue.send("build_report", user_id, format="pdf")
+    return {"job_id": job.id}
+```
+
+Nothing is checked locally: the name is resolved by the worker that picks the
+task up, and one it doesn't know fails there like any other error. For the
+enqueue options, `app.ref` hands back the same handle `@app.task` returns:
+
+```python
+await queue.ref("build_report").options(delay_ms=60_000, priority="low").enqueue(7)
+```
+
+A `ref` can be enqueued but not called — there is no local function behind it.
+
+## Retries and error hooks
+
+A task that raises is retried up to `max_retries` times, waiting `tries²`
+seconds between attempts (or the fixed `backoff_ms` you configure). Raise
+`Retry` to make that call from inside the task instead:
+
+```python
+from ardiq import Retry
+
+
+@app.task(max_retries=5)
+async def call_api():
+    response = await client.get(URL)
+    if response.status_code == 429:
+        raise Retry("rate limited", delay_ms=30_000)
+    return response.json()
+```
+
+`Retry` still respects `max_retries`, so it can't loop forever; when the budget
+runs out the task fails with it as the error.
+
+`@app.on_error` runs a hook on every failed attempt, before ArdiQ decides
+between retrying and failing — this is where a reporter like Sentry goes:
+
+```python
+import sentry_sdk
+
+
+@app.on_error
+def report(ctx):
+    sentry_sdk.capture_exception(ctx.exc)
+    log.warning("%s failed on try %s (retrying: %s)", ctx.name, ctx.tries, ctx.will_retry)
+```
+
+The hook takes an `ErrorContext(name, task_id, exc, tries, will_retry)`, may be
+sync or async, and can be registered more than once — all of them run. One that
+raises is logged and never changes the task's outcome.
+
+It fires on timeouts, on every retry, and when a worker is handed a task it
+doesn't know. It does **not** fire on abort, nor for a `Retry` you raised
+yourself — only when that `Retry` finally gives up. Hooks run on the worker's
+event loop, so keep them quick.
 
 ## Shared resources (lifespan)
 

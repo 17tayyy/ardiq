@@ -84,25 +84,28 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 |---|---|---|
 | `await run()` | `None` | Start the worker loop; runs until `stop()` or (in burst) the queue drains. |
 | `stop()` | `None` | Ask the loop to shut down gracefully. |
+| `await send(name, *args, **kwargs)` | `Job` | Enqueue by name, with no local registration; see [Enqueuing by name](/guides/enqueuing/#enqueuing-by-name). |
+| `ref(name, *, priority=None)` | `Task` | A handle to a task registered elsewhere — enqueueable, not callable. |
 | `await queue_size()` | `int` | Number of jobs waiting across lanes. |
 | `await result(task_id, timeout=None)` | `TaskResult \| None` | Fetch a result; with `timeout` (s) waits, else returns now-or-`None`. |
 | `await status(task_id)` | `str` | `queued` / `scheduled` / `running` / `complete` / `not_found`. |
 | `await info(task_id)` | `TaskInfo \| None` | Snapshot of an unfinished task, else `None`. |
 | `await abort(task_id)` | `bool` | Cancel a queued or running task; `False` if already finished. |
 | `lifespan(fn)` | decorator | Register worker startup/shutdown; see [Shared resources](/guides/lifespan/). |
+| `on_error(fn)` | decorator | Register a failure hook; see [Handling failures](/guides/errors/). |
 | `state` | `State` | Worker-scoped resources set by the lifespan hook. |
 
 ## `Task`
 
-A registered task, returned by `@app.task`. Call it to run inline; use its async methods to
-dispatch.
+A registered task, returned by `@app.task` (or by [`app.ref`](#ardiq), without a function).
+Call it to run inline; use its async methods to dispatch.
 
 | Member | Description |
 |---|---|
 | `name` | The registered name. |
-| `fn` | The underlying function. |
+| `fn` | The underlying function, or `None` for a `ref`. |
 | `priority` | The task's default priority lane (or `None`). |
-| `task(*args, **kwargs)` | Calling the `Task` runs `fn` **inline**, bypassing the queue. |
+| `task(*args, **kwargs)` | Calling the `Task` runs `fn` **inline**, bypassing the queue. A `ref` raises `TypeError`. |
 | `await enqueue(*args, **kwargs)` | Dispatch to a worker; returns a [`Job`](#job). |
 | `options(...)` | Returns a bound task with per-call overrides; see below. |
 
@@ -178,3 +181,30 @@ A `NamedTuple` snapshot of an unfinished task (queued, scheduled, or running).
 | `tries` | `int` | Attempts so far. |
 | `status` | `str` | Current status. |
 | `scheduled_at` | `int \| None` | Epoch ms if waiting in the delayed set, else `None`. |
+
+## `ErrorContext`
+
+A `NamedTuple` handed to every `@app.on_error` hook; see
+[Handling failures](/guides/errors/#reporting-errors).
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | The task's registered name. |
+| `task_id` | `str` | The job id. |
+| `exc` | `BaseException` | The exception the attempt raised. |
+| `tries` | `int` | The attempt that just failed, counting from 1. |
+| `will_retry` | `bool` | Whether another attempt is coming. |
+
+## `Retry`
+
+An exception a task raises to run again, optionally after a delay of its choosing. It
+respects `max_retries`; see [Retrying on demand](/guides/errors/#retrying-on-demand).
+
+```python
+raise Retry("rate limited", delay_ms=30_000)
+```
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `message` | `str` | `"retry requested"` | Why, recorded as the error if the retries run out. |
+| `delay_ms` | `int \| None` | `None` | Wait this long before the next attempt; `None` uses the task's backoff. |

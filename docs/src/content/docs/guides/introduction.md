@@ -24,7 +24,9 @@ because the hot path — the loop and the network — stays off the interpreter.
 - 🦀 **Rust core** — the loop and Redis I/O run on tokio, off the GIL.
 - **Priority queues** — higher-priority tasks are consumed first.
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`).
-- **Automatic retries** with backoff, configurable per task.
+- **Automatic retries** with backoff, configurable per task, or on demand (`raise Retry`).
+- **Enqueue by name** (`app.send("task", ...)`) — producers never import the task module.
+- **Error hooks** (`@app.on_error`) — send every failed attempt to Sentry or your own reporter.
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`).
 - **Results** with TTL, plus task **status** (`queued` / `scheduled` / `running` /
   `complete` / `not_found`).

@@ -1,6 +1,6 @@
 ---
 title: Enqueuing & scheduling
-description: Dispatch tasks with .enqueue, and override priority, delays, scheduled runs, task ids and expiry with .options.
+description: Dispatch tasks with .enqueue or by name with app.send, and override priority, delays, scheduled runs, task ids and expiry with .options.
 ---
 
 Calling `await task.enqueue(*args, **kwargs)` serializes the arguments, pushes the job onto
@@ -14,6 +14,39 @@ print(job.id)   # a uuid hex, unless you set one yourself
 
 Enqueuing is async because the round-trip to Redis is async — call it from within an event
 loop.
+
+## Enqueuing by name
+
+The side that enqueues doesn't have to be the side that runs. `app.send(name, *args,
+**kwargs)` dispatches by name, so a web service can put work on the queue without
+importing the task module — or the dependencies it pulls in:
+
+```python
+from ardiq import Ardiq
+from fastapi import FastAPI
+
+api = FastAPI()
+queue = Ardiq(redis_url="redis://localhost:6379", queue_name="example")
+
+
+@api.post("/reports")
+async def create_report(user_id: int):
+    job = await queue.send("build_report", user_id, format="pdf")
+    return {"job_id": job.id}
+```
+
+Nothing is checked locally: the name is resolved by the worker that picks the task up,
+and one it doesn't know [fails there](/guides/results/) like any other error.
+
+Because `send` forwards every keyword to the task, it takes no options of its own. For
+those, `app.ref(name)` returns the same handle `@app.task` gives you:
+
+```python
+await queue.ref("build_report").options(delay_ms=60_000, priority="low").enqueue(7)
+await queue.ref("build_report", priority="low").enqueue(7)   # a default lane for the handle
+```
+
+A `ref` can be enqueued but not called — there is no local function behind it.
 
 ## Per-call options
 
