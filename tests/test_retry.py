@@ -1,12 +1,13 @@
 """Terminal failure (outcome 1) and the retry bounce through the delayed ZSET."""
 
 import asyncio
+import logging
 import time
 
 import msgpack
 import pytest
 
-from ardiq import ArdiqCore
+from ardiq import ArdiqCore, Retry
 
 
 async def test_terminal_failure(redis, make_app):
@@ -33,7 +34,6 @@ async def test_terminal_failure(redis, make_app):
 
 # These two cases test the raw core retry mechanism with a custom executor
 # (outcome 2 directly), so they still use ArdiqCore directly.
-RETRY, SUCCESS = 1, 0
 
 
 @pytest.mark.parametrize(
@@ -66,3 +66,104 @@ async def test_retry_mechanism(redis, make_core, poll, retry_after_ms, min_gap, 
     env = msgpack.unpackb(await core.result("rt-1"), raw=False)
     assert env["attempts"] == 2
     assert min_gap <= stamps[1] - stamps[0] <= max_gap
+
+
+# `Retry` raised by the task itself: same bounce, chosen delay, quieter.
+
+
+def _pack(app, fn_name):
+    return app._dumps({"f": fn_name, "a": [], "k": {}, "t": 0})
+
+
+async def test_manual_retry_picks_its_own_delay(make_app):
+    app = make_app("retry_manual")
+
+    @app.task(max_retries=3, backoff_ms=5000)
+    async def rate_limited():
+        raise Retry("slow down", delay_ms=250)
+
+    outcome, _, retry_ms = await app._execute("t1", _pack(app, "rate_limited"), 1)
+
+    assert outcome == 2  # RETRY
+    assert retry_ms == 250  # the task's delay beats the task's backoff_ms
+
+
+async def test_manual_retry_falls_back_to_the_configured_backoff(make_app):
+    app = make_app("retry_manual_default")
+
+    @app.task(max_retries=3, backoff_ms=5000)
+    async def again():
+        raise Retry()
+
+    outcome, _, retry_ms = await app._execute("t1", _pack(app, "again"), 1)
+
+    assert outcome == 2
+    assert retry_ms == 5000
+
+
+async def test_manual_retry_respects_max_retries(make_app):
+    app = make_app("retry_manual_budget")
+    seen = []
+
+    @app.on_error
+    def record(ctx):
+        seen.append(ctx)
+
+    @app.task(max_retries=1, backoff_ms=1)
+    async def forever():
+        raise Retry("still not ready")
+
+    first, _, _ = await app._execute("t1", _pack(app, "forever"), 1)
+    last, env, _ = await app._execute("t1", _pack(app, "forever"), 2)
+
+    assert first == 2  # RETRY
+    assert last == 1  # FAILURE — the budget is not infinite
+    result = app._unpack(env)
+    assert result is not None and "still not ready" in str(result.value)
+
+    # Asked-for retries stay out of the hooks; giving up does not.
+    assert len(seen) == 1
+    assert isinstance(seen[0].exc, Retry) and seen[0].will_retry is False
+
+
+async def test_manual_retry_logs_at_info(make_app, caplog):
+    app = make_app("retry_manual_log")
+
+    @app.task(max_retries=1, backoff_ms=1)
+    async def again():
+        raise Retry("waiting on upstream")
+
+    with caplog.at_level(logging.INFO, logger="ardiq"):
+        await app._execute("t1", _pack(app, "again"), 1)
+
+    records = [r for r in caplog.records if r.message.startswith("task retry")]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO  # not a warning: this was on purpose
+
+
+async def test_manual_retry_end_to_end(redis, make_app, poll):
+    app = make_app("retry_manual_e2e", concurrency=2, poll_block_ms=50)
+    attempts: list[int] = []
+
+    @app.task(max_retries=3)
+    async def flaky():
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise Retry("not yet", delay_ms=50)
+        return "ok"
+
+    job = await flaky.enqueue()
+    run = asyncio.ensure_future(app.run())
+    try:
+        assert await poll(lambda: _complete(app, job.id))
+    finally:
+        app.stop()
+        await asyncio.wait_for(run, timeout=15)
+
+    result = await job.result()
+    assert result is not None and result.success and result.value == "ok"
+    assert result.tries == 2
+
+
+async def _complete(app, task_id: str) -> bool:
+    return await app.status(task_id) == "complete"

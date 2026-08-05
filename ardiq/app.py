@@ -16,6 +16,7 @@ from typing import Any
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
 from ardiq.cron import _Schedule
+from ardiq.exceptions import Retry
 from ardiq.models import ABORTED, ErrorContext, State, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
@@ -420,20 +421,28 @@ class Ardiq:
         duration_ms = _now_ms() - start
 
         if error is not None:
+            manual = isinstance(error, Retry)  # the task asked for this
             if isinstance(error, TimeoutError) and reg.timeout is not None:
                 err = f"timed out after {reg.timeout}s"
             else:
                 err = repr(error)
 
             if tries <= reg.max_retries:
-                logger.warning(
+                retry_ms = reg.backoff_ms
+                if isinstance(error, Retry) and error.delay_ms is not None:
+                    retry_ms = error.delay_ms
+                # A retry the task asked for is control flow, not a fault: it is
+                # logged quieter and kept out of the error hooks.
+                log = logger.info if manual else logger.warning
+                log(
                     f"task retry scheduled id={task_id} name={task_name!r} worker={worker_id} "
-                    f"try={tries} delay_ms={reg.backoff_ms or tries * tries * 1000} error={err}"
+                    f"try={tries} delay_ms={retry_ms or tries * tries * 1000} error={err}"
                 )
-                await self._fire_error_hooks(
-                    ErrorContext(task_name, task_id, error, tries, True)
-                )
-                return RETRY, b"", reg.backoff_ms  # 0 = core's default backoff
+                if not manual:
+                    await self._fire_error_hooks(
+                        ErrorContext(task_name, task_id, error, tries, True)
+                    )
+                return RETRY, b"", retry_ms  # 0 = core's default backoff
 
             logger.error(
                 f"task failed id={task_id} name={task_name!r} worker={worker_id} "
