@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from ardiq._core import ArdiqCore as ArdiqCore  # re-exported for tests/tooling
 from ardiq.app import Ardiq
+from ardiq.context import current_task
 from ardiq.exceptions import ArdiqError, BrokerError, Retry
-from ardiq.models import ErrorContext, State, TaskInfo, TaskResult
+from ardiq.models import ErrorContext, State, TaskContext, TaskInfo, TaskResult
 from ardiq.tasks import Job, Task
 
 __all__ = [
@@ -22,6 +23,8 @@ __all__ = [
     "Retry",
     "State",
     "Task",
+    "TaskContext",
     "TaskInfo",
     "TaskResult",
+    "current_task",
 ]

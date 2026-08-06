@@ -15,9 +15,17 @@ from typing import Any
 
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
+from ardiq.context import _current_task
 from ardiq.cron import _Schedule
 from ardiq.exceptions import Retry
-from ardiq.models import ABORTED, ErrorContext, State, TaskInfo, TaskResult
+from ardiq.models import (
+    ABORTED,
+    ErrorContext,
+    State,
+    TaskContext,
+    TaskInfo,
+    TaskResult,
+)
 from ardiq.tasks import Job, Task
 
 # Outcome codes for the Rust core's executor protocol.
@@ -426,6 +434,7 @@ class Ardiq:
         current = asyncio.current_task()
         if current is not None:
             self._running[task_id] = current
+        token = _current_task.set(TaskContext(task_id, task_name, tries))
 
         result = None
         error: Exception | None = None
@@ -451,6 +460,7 @@ class Ardiq:
         except Exception as exc:
             error = exc
         finally:
+            _current_task.reset(token)
             # Deregistered before the hooks run below: an abort landing while a
             # hook awaits would otherwise cancel us on the way out.
             self._running.pop(task_id, None)

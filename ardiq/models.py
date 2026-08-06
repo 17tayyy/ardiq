@@ -34,6 +34,14 @@ class TaskResult(NamedTuple):
         return not self.success and self.value == ABORTED
 
 
+class TaskContext(NamedTuple):
+    """The task being executed, as seen from inside it (`ardiq.current_task()`)."""
+
+    task_id: str
+    name: str
+    tries: int
+
+
 class ErrorContext(NamedTuple):
     """What an `@app.on_error` hook is handed when an attempt goes wrong.
 
