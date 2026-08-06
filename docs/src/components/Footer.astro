@@ -1,0 +1,30 @@
+---
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+---
+
+<Default />
+
+<p class="site-credit" class:list={{ splash: isSplash }}>
+	Made by <a href="https://bytay.dev" rel="me">bytay.dev</a>
+</p>
+
+<style>
+	.site-credit {
+		margin: 1.5rem auto 0;
+		text-align: center;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.site-credit.splash {
+		margin-top: 3rem;
+	}
+	.site-credit a {
+		color: inherit;
+		text-decoration-color: var(--sl-color-gray-5);
+	}
+	.site-credit a:hover {
+		color: var(--sl-color-white);
+	}
+</style>
