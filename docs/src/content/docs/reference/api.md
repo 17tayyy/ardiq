@@ -101,6 +101,10 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 A registered task, returned by `@app.task` (or by [`app.ref`](#ardiq), without a function).
 Call it to run inline; use its async methods to dispatch.
 
+Generic as `Task[**P, R]` over the decorated function's signature, so `enqueue` and
+inline calls are type-checked against it — see
+[Type checking](/guides/tasks/#type-checking). A `ref` types as `Task[..., Any]`.
+
 | Member | Description |
 |---|---|
 | `name` | The registered name. |

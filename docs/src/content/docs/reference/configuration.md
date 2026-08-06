@@ -56,6 +56,9 @@ The list is **lowest-priority first**. With `["low", "default", "high"]`, a work
 [`@task(priority=...)`](/guides/tasks/#priorities) default or a per-call
 [`.options(priority=...)`](/guides/enqueuing/#per-call-options) override.
 
+Any priority naming a lane outside this list raises a `ValueError` — see
+[Priorities](/guides/tasks/#priorities).
+
 ### `concurrency` and `prefetch`
 
 `concurrency` caps how many tasks execute simultaneously. `prefetch` caps how many are

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ardiq.models import TaskInfo, TaskResult
 
@@ -37,27 +37,36 @@ class Job:
         return await self.app.abort(self.id)
 
 
-class Task:
+class Task[**P, R]:
     """A registered task. Call it to run inline, or `.enqueue` to dispatch.
 
+    Generic over the decorated function's signature, so `.enqueue(...)` is
+    checked against it — a wrong argument is a type error, not a worker-side
+    failure discovered in production.
+
     `Ardiq.ref` builds one with no local function — a handle to a task that
-    lives in another process, enqueueable but not callable.
+    lives in another process, enqueueable but not callable. Its parameters are
+    unknown, so it types as `Task[..., Any]` and nothing is checked.
     """
 
     def __init__(
-        self, app: Ardiq, name: str, fn: Callable[..., Any] | None, priority: str | None
+        self,
+        app: Ardiq,
+        name: str,
+        fn: Callable[P, R] | None,
+        priority: str | None,
     ):
         self.app = app
         self.name = name
         self.fn = fn
         self.priority = priority
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         if self.fn is None:
             raise TypeError(f"task {self.name!r} is a reference, not a local function")
         return self.fn(*args, **kwargs)
 
-    async def enqueue(self, *args: Any, **kwargs: Any) -> Job:
+    async def enqueue(self, *args: P.args, **kwargs: P.kwargs) -> Job:
         """Dispatch the task with these args; returns a `Job` handle."""
         return await self.app._enqueue(self.name, args, kwargs, priority=self.priority)
 
@@ -69,23 +78,23 @@ class Task:
         delay_ms: int = 0,
         schedule_ms: int = 0,
         expire_ms: int = 0,
-    ) -> _BoundTask:
+    ) -> _BoundTask[P, R]:
         """Bind one-off enqueue options (delay, schedule, priority, id) for `.enqueue`."""
         return _BoundTask(self, task_id, priority, delay_ms, schedule_ms, expire_ms)
 
 
 @dataclass(frozen=True, slots=True)
-class _BoundTask:
+class _BoundTask[**P, R]:
     """A task plus enqueue options, kept off `enqueue(*args, **kwargs)`."""
 
-    task: Task
+    task: Task[P, R]
     task_id: str | None
     priority: str | None
     delay_ms: int
     schedule_ms: int
     expire_ms: int
 
-    async def enqueue(self, *args: Any, **kwargs: Any) -> Job:
+    async def enqueue(self, *args: P.args, **kwargs: P.kwargs) -> Job:
         return await self.task.app._enqueue(
             self.task.name,
             args,

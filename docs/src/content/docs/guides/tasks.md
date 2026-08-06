@@ -170,6 +170,22 @@ With an even number of lanes the middle rounds *up*, so `["low", "high"]` defaul
 still completes and nothing tells you it happened. `app.default_priority` reports the
 lane in force.
 
+A lane that isn't in `priorities` raises, both at registration and at enqueue:
+
+```python
+app = Ardiq(priorities=["low", "default", "high"])
+
+@app.task(priority="urgent")   # ValueError: 'urgent' is not one of
+async def charge(...): ...     # ['low', 'default', 'high'] — no worker reads that lane
+```
+
+:::caution[Producers must declare the same lanes as the worker]
+The check runs wherever a priority is given, including `app.send` and `ref().enqueue`
+in a process that only produces. A web app declaring `Ardiq(priorities=["default"])`
+cannot enqueue to `"high"` even if the worker has that lane — which is the point: it
+was writing to a stream nothing consumed. Declare the full list on both sides.
+:::
+
 See [Enqueuing & scheduling](/guides/enqueuing/) for per-call overrides.
 
 ## Recurring tasks
@@ -187,3 +203,25 @@ result = await add(2, 3)   # runs now, in-process; no Redis involved
 ```
 
 To actually dispatch it to a worker, use [`.enqueue(...)`](/guides/enqueuing/).
+
+## Type checking
+
+`Task` carries the decorated function's signature, so `.enqueue(...)` takes the same
+arguments the task does — a mistake is caught by mypy, pyright or ty rather than by a
+worker at 3am:
+
+```python
+@app.task()
+async def charge(user_id: int, amount: float) -> str: ...
+
+await charge.enqueue(1, 9.99)          # ok
+await charge.enqueue("1", 9.99)        # error: str is not int
+await charge.enqueue(1)                # error: missing 'amount'
+```
+
+`.options(...)` keeps the signature, so `charge.options(delay_ms=5000).enqueue(...)` is
+checked too. Calling the task inline returns its declared return type.
+
+Tasks reached by name are the exception: [`app.send`](/guides/enqueuing/#enqueuing-by-name)
+and `app.ref` have no local function to read a signature from, so their arguments are
+unchecked by construction.

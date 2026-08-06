@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, overload
 
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
@@ -87,7 +87,8 @@ class Ardiq:
         self._core = ArdiqCore({k: v for k, v in config.items() if v is not None})
 
         lanes = self._core.priorities
-        if default_priority is not None and default_priority not in lanes:
+        self._lanes = frozenset(lanes)
+        if default_priority is not None and default_priority not in self._lanes:
             raise ValueError(
                 f"default_priority {default_priority!r} is not one of {lanes}"
             )
@@ -95,6 +96,19 @@ class Ardiq:
         # must not quietly demote work — demoted work still completes, so
         # nothing ever tells you it happened.
         self._default_priority = default_priority or lanes[len(lanes) // 2]
+
+    def _check_priority(self, priority: str | None) -> None:
+        """Refuse a lane no consumer reads.
+
+        Writing to an unconfigured lane is worse than silent: the stream exists,
+        so `status()` reports `queued` forever, while `queue_size()` reports 0 —
+        the two things an operator would check lie in opposite directions.
+        """
+        if priority is not None and priority not in self._lanes:
+            raise ValueError(
+                f"priority {priority!r} is not one of {self._core.priorities} — "
+                "no worker reads that lane"
+            )
 
     @property
     def default_priority(self) -> str:
@@ -165,9 +179,24 @@ class Ardiq:
         """Names of the registered cron tasks."""
         return list(self._crons)
 
-    def task(
+    @overload
+    def task[**P, R](self, fn: Callable[P, R], /) -> Task[P, R]: ...
+
+    @overload
+    def task[**P, R](
         self,
-        fn: Callable[..., Any] | None = None,
+        fn: None = None,
+        *,
+        name: str | None = ...,
+        max_retries: int = ...,
+        backoff_ms: int = ...,
+        timeout: float | None = ...,
+        priority: str | None = ...,
+    ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
+
+    def task[**P, R](
+        self,
+        fn: Callable[P, R] | None = None,
         *,
         name: str | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -176,8 +205,9 @@ class Ardiq:
         priority: str | None = None,
     ) -> Any:
         """Register a function as a task. Returns a `Task` you can `.enqueue`."""
+        self._check_priority(priority)
 
-        def wrap(fn: Callable[..., Any]) -> Task:
+        def wrap(fn: Callable[P, R]) -> Task[P, R]:
             task_name = self._register(
                 name, fn, "task", max_retries, backoff_ms, timeout
             )
@@ -185,7 +215,7 @@ class Ardiq:
 
         return wrap(fn) if fn is not None else wrap
 
-    def cron(
+    def cron[**P, R](
         self,
         spec: str | None = None,
         *,
@@ -195,12 +225,13 @@ class Ardiq:
         backoff_ms: int = 0,
         timeout: float | None = None,
         priority: str | None = None,
-    ) -> Callable[[Callable[..., Any]], Task]:
+    ) -> Callable[[Callable[P, R]], Task[P, R]]:
         """Register a recurring task. Pass a 5-field cron `spec` (UTC) or an
         `every=` interval (timedelta or seconds). It fires while a worker runs."""
         schedule = _Schedule(every=every, cron=spec)
+        self._check_priority(priority)
 
-        def wrap(fn: Callable[..., Any]) -> Task:
+        def wrap(fn: Callable[P, R]) -> Task[P, R]:
             task_name = self._register(
                 name, fn, "cron", max_retries, backoff_ms, timeout
             )
@@ -286,7 +317,7 @@ class Ardiq:
             except Exception:
                 logger.exception("ardiq on_error hook failed for %r", ctx.name)
 
-    def ref(self, name: str, *, priority: str | None = None) -> Task:
+    def ref(self, name: str, *, priority: str | None = None) -> Task[..., Any]:
         """A handle to a task registered somewhere else — same `.enqueue` and
         `.options` as a local task, but no function to call. Use it to reach a
         worker's tasks without importing (or registering) them here."""
@@ -312,6 +343,7 @@ class Ardiq:
         schedule_ms: int = 0,
         expire_ms: int = 0,
     ) -> Job:
+        self._check_priority(priority)
         job_id = task_id or uuid.uuid4().hex
         payload = self._pack(name, args, kwargs)
         await self._core.enqueue(
