@@ -3,6 +3,8 @@
 import asyncio
 import time
 
+import pytest
+
 
 async def _complete(app, task_id: str) -> bool:
     return await app.status(task_id) == "complete"
@@ -33,6 +35,37 @@ async def test_priority_high_before_low(redis, make_app):
     assert len(order) == 6
     assert all(t.startswith("high") for t in order[:3])
     assert all(t.startswith("low") for t in order[3:])
+
+
+async def test_no_priority_lands_in_the_middle_lane(redis, make_app):
+    """Forgetting `priority=` must not quietly demote the task to the bottom."""
+    app = make_app("prio_default", priorities=["low", "default", "high"])
+
+    @app.task()
+    def whatever(): ...
+
+    assert app.default_priority == "default"
+    await whatever.enqueue()
+
+    assert await redis.xlen("ardiq:prio_default:queues:low") == 0
+    assert await redis.xlen("ardiq:prio_default:queues:default") == 1
+
+
+async def test_default_priority_can_be_chosen(redis, make_app):
+    app = make_app("prio_chosen", priorities=["low", "high"], default_priority="low")
+
+    @app.task()
+    def whatever(): ...
+
+    await whatever.enqueue()
+
+    assert await redis.xlen("ardiq:prio_chosen:queues:low") == 1
+    assert await redis.xlen("ardiq:prio_chosen:queues:high") == 0
+
+
+async def test_default_priority_must_be_a_real_lane(make_app):
+    with pytest.raises(ValueError, match="not one of"):
+        make_app("prio_bad", priorities=["low", "high"], default_priority="urgent")
 
 
 async def test_delayed_and_scheduled(redis, make_app, poll):

@@ -54,6 +54,7 @@ class Ardiq:
         priorities: list[str] | None = None,
         worker_id: str | None = None,
         *,
+        default_priority: str | None = None,
         serializer: Callable[[Any], bytes] | None = None,
         deserializer: Callable[[bytes], Any] | None = None,
         cron_poll_s: float = 1.0,
@@ -76,6 +77,21 @@ class Ardiq:
             **core_kwargs,
         }
         self._core = ArdiqCore({k: v for k, v in config.items() if v is not None})
+
+        lanes = self._core.priorities
+        if default_priority is not None and default_priority not in lanes:
+            raise ValueError(
+                f"default_priority {default_priority!r} is not one of {lanes}"
+            )
+        # Without an explicit choice, the middle lane. Forgetting `priority=`
+        # must not quietly demote work — demoted work still completes, so
+        # nothing ever tells you it happened.
+        self._default_priority = default_priority or lanes[len(lanes) // 2]
+
+    @property
+    def default_priority(self) -> str:
+        """The lane a task lands in when no priority is given."""
+        return self._default_priority
 
     @property
     def redis_url(self) -> str:
@@ -291,7 +307,12 @@ class Ardiq:
         job_id = task_id or uuid.uuid4().hex
         payload = self._pack(name, args, kwargs)
         await self._core.enqueue(
-            job_id, payload, priority, delay_ms, schedule_ms, expire_ms
+            job_id,
+            payload,
+            priority or self._default_priority,
+            delay_ms,
+            schedule_ms,
+            expire_ms,
         )
         return Job(self, job_id)
 
