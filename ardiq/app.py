@@ -154,15 +154,8 @@ class Ardiq:
         """Register a function as a task. Returns a `Task` you can `.enqueue`."""
 
         def wrap(fn: Callable[..., Any]) -> Task:
-            task_name = name or getattr(fn, "__name__", None)
-            if task_name is None:
-                raise TypeError("@task needs an explicit name for this callable")
-            self._registry[task_name] = _Registered(
-                fn,
-                max_retries,
-                backoff_ms,
-                asyncio.iscoroutinefunction(fn),
-                timeout,
+            task_name = self._register(
+                name, fn, "task", max_retries, backoff_ms, timeout
             )
             return Task(self, task_name, fn, priority)
 
@@ -184,16 +177,39 @@ class Ardiq:
         schedule = _Schedule(every=every, cron=spec)
 
         def wrap(fn: Callable[..., Any]) -> Task:
-            task_name = name or getattr(fn, "__name__", None)
-            if task_name is None:
-                raise TypeError("@cron needs an explicit name for this callable")
-            self._registry[task_name] = _Registered(
-                fn, max_retries, backoff_ms, asyncio.iscoroutinefunction(fn), timeout
+            task_name = self._register(
+                name, fn, "cron", max_retries, backoff_ms, timeout
             )
             self._crons[task_name] = (schedule, priority)
             return Task(self, task_name, fn, priority)
 
         return wrap
+
+    def _register(
+        self,
+        name: str | None,
+        fn: Callable[..., Any],
+        decorator: str,
+        max_retries: int,
+        backoff_ms: int,
+        timeout: float | None,
+    ) -> str:
+        """Put a task in the registry, refusing to shadow one already there."""
+        task_name = name or getattr(fn, "__name__", None)
+        if task_name is None:
+            raise TypeError(f"@{decorator} needs an explicit name for this callable")
+        existing = self._registry.get(task_name)
+        if existing is not None:
+            owner = getattr(existing.fn, "__module__", "?")
+            raise ValueError(
+                f"task {task_name!r} is already registered by {owner} — two tasks "
+                "cannot share a name, or one silently replaces the other. Rename "
+                "it, or give one an explicit name= in the decorator."
+            )
+        self._registry[task_name] = _Registered(
+            fn, max_retries, backoff_ms, asyncio.iscoroutinefunction(fn), timeout
+        )
+        return task_name
 
     def lifespan(
         self, fn: Callable[[], AsyncIterator[Any]]
