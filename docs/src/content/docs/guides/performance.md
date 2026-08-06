@@ -8,40 +8,25 @@ head:
 
 ArdiQ's edge isn't a single number — it's the **balance**. Because the worker loop and every
 Redis round-trip run in Rust, off the GIL, ArdiQ delivers **near-top throughput at the
-lowest memory of any fast queue**, which gives it the best throughput-to-memory ratio in
-the field.
+lowest memory of any fast queue**. No queue in the suite beats it on throughput *and*
+memory at the same time.
 
 The numbers below come from an apples-to-apples suite that runs six Redis-backed Python
 queues through the same scenarios on the same machine. It's open and reproducible:
 [**python-task-queue-benchmarks**](https://github.com/17tayyy/python-task-queue-benchmarks).
 
-## Efficiency: throughput per MB
-
-The metric that captures the whole trade-off is how much work a queue does per megabyte of
-memory it holds. ArdiQ leads it.
-
-| Queue        | I/O (tasks/s per MB) | CPU (tasks/s per MB) |
-|--------------|----------------------|----------------------|
-| **ArdiQ** 🦀 | **2.9**              | **11.2**             |
-| arq          | 2.9                  | 10.5                 |
-| Streaq       | 1.9                  | 7.2                  |
-| Taskiq       | 1.1                  | 4.1                  |
-| Celery       | 1.4                  | 0.3                  |
-| Dramatiq     | 1.7                  | 0.2                  |
-
-ArdiQ does the most work per megabyte of any queue tested — roughly **2.7× Taskiq's I/O
-efficiency**. (arq matches it on I/O efficiency, but only by running ~10% slower; ArdiQ
-stays this light *while* sitting near the throughput ceiling.)
-
 ## Test setup
 
-- **1,000 tasks**, **1 worker process**, **10 concurrent** tasks, **3 iterations** —
+- **1,000 tasks**, **1 worker process**, **10 concurrent** tasks, **6 interleaved rounds** —
   metrics reported as `mean ± std`.
+- Rounds are interleaved and the starting library rotates, so no library sits at the same
+  position twice and machine drift is spread across all six rather than landing on whoever
+  runs last.
 - Two scenarios:
   - **`io_task`** — a 100 ms sleep (`asyncio.sleep` for async libs, `time.sleep` for sync).
   - **`cpu_task`** — 1,000 SHA-256 hashes over 1 KiB inputs per task.
 - **Machine:** 8-core / 16-thread x86-64, 15 GB RAM, CPython 3.13, Redis 7.4.
-- **Versions:** ArdiQ 0.1.1, arq 0.28, Taskiq 0.12.4, Streaq 6.5.0, Celery 5.5.3,
+- **Versions:** ArdiQ 0.5.0, arq 0.28, Taskiq 0.12.4, Streaq 6.5.0, Celery 5.5.3,
   Dramatiq 2.1.0.
 
 ## I/O-bound throughput
@@ -53,16 +38,15 @@ network-bound.
 
 | Queue        | Throughput (tasks/s) | Memory   |
 |--------------|----------------------|----------|
-| **ArdiQ** 🦀 | **98.6**             | **34 MB** 🪶 |
-| Taskiq       | 97.9                 | 92 MB    |
-| Dramatiq     | 93.5                 | 56 MB    |
-| Streaq       | 93.4                 | 48 MB    |
-| arq          | 87.7                 | 30 MB    |
-| Celery       | 71.7                 | 51 MB    |
+| Taskiq       | 97.8                 | 91 MB    |
+| **ArdiQ** 🦀 | **96.6**             | **33 MB** 🪶 |
+| Dramatiq     | 94.4                 | 56 MB    |
+| Streaq       | 94.1                 | 48 MB    |
+| arq          | 88.5                 | 30 MB    |
+| Celery       | 67.9                 | 51 MB    |
 
-ArdiQ runs **within ~1% of the fastest queue, practically hitting the network ceiling — at
-roughly a third of that queue's memory.** It's the lightest of every queue that clears 90%
-of the ceiling.
+ArdiQ runs **within 1.2% of the fastest queue, practically hitting the ceiling — on a third
+of that queue's memory.** It's the lightest of everything that clears 95% of the ceiling.
 
 ## CPU-bound throughput
 
@@ -70,29 +54,96 @@ The `cpu_task` scenario hashes under the GIL, so for *every* single-process queu
 body is serial on one core. What this measures is really **per-task framing overhead**
 (serialization, broker round-trips, bookkeeping) on top of the constant hashing cost.
 
-| Queue        | Throughput (tasks/s) | Memory   |
-|--------------|----------------------|----------|
-| **ArdiQ** 🦀 | **389.3**            | **34 MB** 🪶 |
-| Taskiq       | 388.1                | 94 MB    |
-| Streaq       | 353.8                | 49 MB    |
-| arq          | 317.6                | 30 MB    |
-| Celery       | 13.8                 | 52 MB    |
-| Dramatiq     | 13.8                 | 56 MB    |
+| Queue        | Throughput (tasks/s) | Latency p99      | Memory   |
+|--------------|----------------------|------------------|----------|
+| Taskiq       | 424.9                | 2,713 ms ±1,021  | 91 MB    |
+| Streaq       | 378.2                | 2,994 ms ±1,055  | 48 MB    |
+| **ArdiQ** 🦀 | **375.7**            | **2,609 ms ±21** | **33 MB** 🪶 |
+| arq          | 344.7                | 3,243 ms ±980    | 30 MB    |
+| Celery       | 14.7                 | 73,372 ms        | 50 MB    |
+| Dramatiq     | 14.7                 | 73,147 ms        | 55 MB    |
 
-Again ArdiQ is effectively tied for the lead on throughput, at a third of the leader's
-memory. (Celery and Dramatiq sit far lower here because their thread pools serialize on the
-GIL for this workload — see the caveats.)
+ArdiQ and Streaq are tied on throughput — 375.7 ±4.6 against 378.2 ±7.2 — but ArdiQ does it
+on 31% less memory. Taskiq's 13% lead is real and reproducible; the next section explains
+where it comes from.
+
+Read the p99 column with its spread, not just its mean. ArdiQ's tail sits at **2,609 ms
+±21**, while the other three async queues swing by **±1,000 ms** round to round — their
+means are not far off, but you cannot predict which one you'll get. For a task queue, a
+tail latency you can plan around is usually worth more than a slightly lower one you can't.
+
+(Celery and Dramatiq sit far lower because their thread pools serialize on the GIL for this
+workload — see the caveats.)
+
+## What the Rust core costs, and what it buys
+
+Read the CPU numbers as **milliseconds per task** instead, and the design shows through.
+Every queue runs the same Python task body, so that cost is identical; the difference is
+purely what each one spends dispatching:
+
+| Queue    | ms/task | Dispatch overhead |
+|----------|---------|-------------------|
+| Taskiq   | 2.353   | —                 |
+| Streaq   | 2.644   | +0.291 ms         |
+| **ArdiQ**| 2.662   | **+0.308 ms**     |
+| arq      | 2.901   | +0.548 ms         |
+
+ArdiQ spends about **0.3 ms per task** more than Taskiq. That is the price of the boundary:
+each task crosses Rust → Python to start and Python → Rust to return, taking the GIL and
+bridging a future each way. Taskiq is pure Python — dispatching is an `asyncio.create_task`
+and it never crosses anything.
+
+That overhead is **fixed, not proportional**, which is the whole story:
+
+- On a **2.4 ms** task — the benchmark's `cpu_task` — 0.3 ms is **13%**.
+- On a **100 ms** task — the benchmark's `io_task` — 0.3 ms is **0.3%**, and ArdiQ lands
+  within 1.2% of the lead.
+
+So `cpu_task` is close to the worst case for this design: a thousand tiny tasks, where a
+per-task toll weighs most. The work people actually build queues for — sending mail,
+calling APIs, resizing images — runs in hundreds of milliseconds, where the toll disappears
+and the memory stays.
+
+Worth noting that Streaq pays +0.291 ms to ArdiQ's +0.308: the boundary isn't some exotic
+Rust tax, it's within a hair of the best pure-async queue — on two thirds of its memory.
+
+## Efficiency: throughput per MB
+
+The metric that captures the whole trade-off is how much work a queue does per megabyte it
+holds.
+
+| Queue        | I/O (tasks/s per MB) | CPU (tasks/s per MB) |
+|--------------|----------------------|----------------------|
+| arq          | 2.92                 | 11.34                |
+| **ArdiQ** 🦀 | **2.91**             | **11.28**            |
+| Streaq       | 1.95                 | 7.82                 |
+| Dramatiq     | 1.70                 | 0.27                 |
+| Celery       | 1.33                 | 0.29                 |
+| Taskiq       | 1.07                 | 4.66                 |
+
+ArdiQ and arq are tied at the top — the difference is under 1%, well inside the noise. The
+distinction is what each does with it: ArdiQ turns that efficiency into **9% more
+throughput than arq on both workloads**, while arq spends it staying 3 MB lighter.
+
+Against the queues that compete on speed, the gap is not close: ArdiQ does **2.7× Taskiq's
+work per megabyte** on I/O.
 
 ## The takeaways
 
-- ⚡ **Best throughput-to-memory ratio** — ArdiQ does the most work per megabyte of any
-  queue in the suite.
-- 🪶 **Lightest of the fast queues** — ~34 MB, the lowest footprint of anything at its
-  performance level. (arq is marginally lighter in absolute terms but meaningfully slower.)
-- 🏆 **Among the fastest** — within ~1% of the leader on both workloads.
-- 📈 **Near the theoretical ceiling** on I/O work — practically network-bound, with nothing
-  lost to scheduling.
-- 🎯 **Rock-steady** — negligible variance run to run (low `std`).
+- 🪶 **Lightest of the fast queues** — 33 MB, the lowest footprint of anything at its
+  performance level. (arq is 3 MB lighter but 9% slower on both workloads.)
+- ⚡ **Best throughput-to-memory ratio**, tied with arq and far ahead of everything else.
+- 🎯 **Predictable tail latency** — p99 of 2,609 ms ±21 on CPU work, where the other async
+  queues swing ±1,000 ms between rounds.
+- 📈 **Near the theoretical ceiling** on I/O work — within 1.2% of the lead, on a third of
+  its memory.
+- 🧱 **Rock-steady** — ArdiQ measured within ±1% across five separate runs while other
+  queues moved 5–8% with the machine.
+
+What ArdiQ is *not*: the fastest queue in raw throughput. Taskiq is 13% quicker on
+CPU-bound micro-tasks, and it spends 91 MB doing it. If your tasks are tiny and memory is
+free, that's the better trade. If they're normal-sized and you run more than one worker,
+ArdiQ's is.
 
 ## Honest caveats
 
@@ -102,6 +153,9 @@ The GIL caps in-process CPU work for *every* Python queue — ArdiQ included —
 tasks are serial per worker; scale them out with more worker processes.
 :::
 
+- **Never compare across runs.** Only the libraries *within* one run are comparable. On this
+  machine the same unchanged code measured 5–8% apart on different evenings, which is
+  larger than most of the gaps above.
 - **CPU parallelism isn't measured here.** All libraries run one worker; to scale CPU work
   you'd run multiple worker processes (Celery's prefork, Dramatiq's `--processes N`, or
   several async workers). This suite measures per-task overhead, not multi-core scaling.
