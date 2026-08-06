@@ -1,6 +1,9 @@
 ---
 title: Performance
 description: How ArdiQ stacks up against five other Python task queues on throughput, memory and efficiency, with honest caveats.
+head:
+  - tag: title
+    content: Python task queue benchmarks — ArdiQ vs arq, Taskiq, Celery
 ---
 
 ArdiQ's edge isn't a single number — it's the **balance**. Because the worker loop and every

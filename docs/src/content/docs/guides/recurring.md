@@ -1,6 +1,9 @@
 ---
 title: Recurring tasks
 description: Run tasks on a schedule with @app.cron — standard cron expressions (UTC) or fixed every= intervals.
+head:
+  - tag: title
+    content: Cron and recurring tasks in Python — ArdiQ
 ---
 
 Register a task to run repeatedly with `@app.cron`. Give it either a standard 5-field

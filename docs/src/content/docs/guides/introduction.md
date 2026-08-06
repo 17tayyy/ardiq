@@ -1,6 +1,9 @@
 ---
 title: Introduction
 description: What ArdiQ is, how the Rust core and Python API fit together, and when to reach for it.
+head:
+  - tag: title
+    content: What is ArdiQ? Python task queue with a Rust core
 ---
 
 ArdiQ is a distributed task queue: you enqueue function calls from anywhere in your

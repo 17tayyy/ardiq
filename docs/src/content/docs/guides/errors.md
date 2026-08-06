@@ -1,6 +1,9 @@
 ---
 title: Handling failures
 description: Steer a task's retries with the Retry exception, and report every failed attempt to Sentry or your own reporter with @app.on_error.
+head:
+  - tag: title
+    content: Retries and error handling for Python tasks — ArdiQ
 ---
 
 A task that raises is retried up to `max_retries` times and then stored as a failed
