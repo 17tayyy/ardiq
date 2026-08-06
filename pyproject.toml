@@ -28,7 +28,11 @@ dependencies = [
 cli = ["typer>=0.26.0", "rich>=13.0"]
 
 [project.urls]
+Homepage = "https://ardiq.bytay.dev"
+Documentation = "https://ardiq.bytay.dev"
 Repository = "https://github.com/17tayyy/ardiq"
+Issues = "https://github.com/17tayyy/ardiq/issues"
+Changelog = "https://github.com/17tayyy/ardiq/releases"
 
 [project.scripts]
 ardiq = "ardiq.cli:main"

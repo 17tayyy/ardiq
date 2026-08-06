@@ -12,6 +12,13 @@
   <a href="https://github.com/17tayyy/ardiq/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
 
+<p align="center">
+  <b><a href="https://ardiq.bytay.dev">Documentation</a></b> &nbsp;•&nbsp;
+  <a href="https://ardiq.bytay.dev/guides/getting-started/">Getting started</a> &nbsp;•&nbsp;
+  <a href="https://ardiq.bytay.dev/reference/api/">API reference</a> &nbsp;•&nbsp;
+  <a href="https://ardiq.bytay.dev/guides/performance/">Benchmarks</a>
+</p>
+
 ---
 
 A fast distributed task queue with a **Rust core** and a clean **Python API**, backed by Redis streams.
@@ -400,6 +407,13 @@ $ uv run ty check ardiq tests   # type-check
 ```
 
 After changing the Rust core, rebuild with `uv sync --reinstall-package ardiq`.
+
+## Contributing
+
+Bug reports, docs fixes and features are all welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, the layout of the codebase and
+what to open an issue about first. Questions and ideas go in
+[Discussions](https://github.com/17tayyy/ardiq/discussions).
 
 ## License
 

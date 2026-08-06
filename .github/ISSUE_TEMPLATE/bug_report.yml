@@ -1,0 +1,53 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest app + task that shows the problem. A runnable snippet gets
+        a fix far faster than a description.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Worker output
+      description: Output of `ardiq run your_module:app --verbose`, if relevant.
+      render: shell
+
+  - type: input
+    id: ardiq-version
+    attributes:
+      label: ArdiQ version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.13.2"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Redis version
+      placeholder: "Ubuntu 24.04, Redis 7.4"
+    validations:
+      required: true
