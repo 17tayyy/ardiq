@@ -15,14 +15,8 @@ $ pip install ardiq
 ```
 
 ArdiQ ships as a prebuilt wheel with the Rust core baked in — no Rust toolchain needed to
-*use* it. The base package is the library and has a single runtime dependency (`msgpack`):
-enough to define tasks, enqueue, and run a worker from your own code.
-
-The `ardiq` **worker command** used below ships in the `cli` extra:
-
-```console
-$ pip install 'ardiq[cli]'
-```
+*use* it. That single install gives you the library, the `ardiq` worker command used
+below, and one runtime dependency (`msgpack`).
 
 You also need a Redis server — the quickest way is Docker:
 

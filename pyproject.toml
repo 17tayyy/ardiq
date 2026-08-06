@@ -25,7 +25,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cli = ["typer>=0.26.0", "rich>=13.0"]
+# The CLI needs nothing beyond the base install; kept so `pip install
+# 'ardiq[cli]'` from older docs and Dockerfiles keeps resolving.
+cli = []
 
 [project.urls]
 Homepage = "https://ardiq.bytay.dev"
@@ -85,6 +87,4 @@ dev = [
     "redis>=8.0.0",
     "ruff>=0.15.15",
     "ty>=0.0.40",
-    "typer>=0.26.0",  # the `cli` extra, needed to run the CLI tests
-    "rich>=13.0",
 ]

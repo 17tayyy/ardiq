@@ -102,13 +102,9 @@ is the Rust core (memory and per-task overhead) and a batteries-included API.
 $ pip install ardiq
 ```
 
-The base install is the library only — a **single runtime dependency** (`msgpack`)
-— enough to define tasks, enqueue them, and run a worker from your own code
-(`await app.run()`). For the `ardiq` worker command, add the CLI extra:
-
-```console
-$ pip install 'ardiq[cli]'
-```
+That's everything — the library, the `ardiq` worker command, and a **single runtime
+dependency** (`msgpack`). Define tasks, enqueue them, and run a worker either from
+the CLI or from your own code (`await app.run()`).
 
 You also need a Redis server — the quickest way is Docker:
 

@@ -3,11 +3,11 @@ title: CLI
 description: The ardiq command-line interface for running workers.
 ---
 
-The `ardiq` command (a [Typer](https://typer.tiangolo.com/) app) ships in the **`cli`
-extra** — the base `pip install ardiq` is library-only:
+The `ardiq` command comes with the base install — it pulls in no dependencies of its own,
+so a worker process carries nothing but the library:
 
 ```console
-$ pip install 'ardiq[cli]'
+$ pip install ardiq
 $ ardiq --help
 ```
 

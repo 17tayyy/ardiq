@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import importlib
 import logging
 import signal
-from typing import TYPE_CHECKING, Annotated
-
-try:
-    import typer
-except ModuleNotFoundError as exc:  # pragma: no cover, only without the [cli] extra
-    raise SystemExit(
-        "The `ardiq` command needs the CLI extra. Install it with:\n"
-        "    pip install 'ardiq[cli]'"
-    ) from exc
+import sys
+from typing import TYPE_CHECKING
 
 from ardiq._core import init_logging
 
@@ -23,13 +17,6 @@ if TYPE_CHECKING:
     from ardiq import Ardiq
 
 logger = logging.getLogger("ardiq")
-
-cli = typer.Typer(no_args_is_help=True, add_completion=False)
-
-
-@cli.callback()
-def _root() -> None:
-    """ArdiQ — a Rust-powered distributed task queue."""
 
 
 def import_string(path: str) -> Ardiq:
@@ -83,34 +70,46 @@ async def serve(
         logger.info(f"worker stopped worker_id={app.worker_id} reason={reason}")
 
 
-@cli.command(help="Run a worker")
-def run(
-    app: Annotated[str, typer.Argument(help="App path, e.g. 'myapp:app'")],
-    burst: Annotated[
-        bool, typer.Option("--burst", "-b", help="Exit once the queue drains")
-    ] = False,
-    verbose: Annotated[
-        bool, typer.Option("--verbose", "-v", help="Use DEBUG-level logging")
-    ] = False,
-    quiet: Annotated[
-        bool,
-        typer.Option(
-            "--quiet",
-            "-q",
-            help="Skip the startup banner (plain log line instead)",
-        ),
-    ] = False,
-) -> None:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ardiq",
+        description="ArdiQ — a Rust-powered distributed task queue.",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    run = sub.add_parser("run", help="Run a worker", description="Run a worker")
+    run.add_argument("app", help="App path, e.g. 'myapp:app'")
+    run.add_argument(
+        "-b", "--burst", action="store_true", help="Exit once the queue drains"
+    )
+    run.add_argument(
+        "-v", "--verbose", action="store_true", help="Use DEBUG-level logging"
+    )
+    run.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Skip the startup banner (plain log line instead)",
+    )
+    return parser
+
+
+def _run(args: argparse.Namespace) -> None:
     logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    init_logging(verbose)  # surface the Rust core's logs too
-    worker = import_string(app)
+    init_logging(args.verbose)  # surface the Rust core's logs too
+    worker = import_string(args.app)
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(serve(worker, burst, app_path=app, quiet=quiet))
+        asyncio.run(serve(worker, args.burst, app_path=args.app, quiet=args.quiet))
 
 
 def main(argv: list[str] | None = None) -> None:
-    cli(args=argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help(sys.stderr)
+        raise SystemExit(1)
+    _run(args)

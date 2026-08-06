@@ -5,22 +5,37 @@ import logging
 import os
 
 import pytest
-from typer.testing import CliRunner
 
-from ardiq.cli import cli, import_string, serve
-
-runner = CliRunner()
+from ardiq.cli import build_parser, import_string, main, serve
 
 
-def test_cli_help_lists_run():
-    result = runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    assert "run" in result.stdout
+def test_cli_help_lists_run(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    assert "run" in capsys.readouterr().out
+
+
+def test_cli_no_command_exits_nonzero(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main([])
+    assert exc.value.code == 1
+    assert "run" in capsys.readouterr().err
 
 
 def test_cli_run_requires_app():
-    result = runner.invoke(cli, ["run"])
-    assert result.exit_code != 0
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["run"])
+    assert exc.value.code != 0
+
+
+def test_cli_run_parses_flags():
+    args = build_parser().parse_args(["run", "myapp:app", "--burst", "-q"])
+    assert args.command == "run"
+    assert args.app == "myapp:app"
+    assert args.burst is True
+    assert args.quiet is True
+    assert args.verbose is False
 
 
 def test_import_string_loads_attr():
