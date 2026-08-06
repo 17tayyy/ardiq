@@ -189,6 +189,21 @@ await queue.ref("build_report").options(delay_ms=60_000, priority="low").enqueue
 
 A `ref` can be enqueued but not called — there is no local function behind it.
 
+**Priority does not travel with the name.** Everything else you put on
+`@app.task(...)` — `max_retries`, `backoff_ms`, `timeout` — is applied by the
+worker, which has the registry and can look it up. Priority is the exception: it
+picks which stream the task goes into, so it is settled by the producer, before
+the payload leaves. A task declared `@app.task(priority="high")` and dispatched
+by name lands in the app's `default_priority` instead, with no warning — pass it
+at the call site:
+
+```python
+await queue.ref("build_report", priority="high").enqueue(7)
+```
+
+Since the fallback is the middle lane, forgetting it is survivable rather than
+disastrous, but the work still won't be where you declared it belongs.
+
 ## Retries and error hooks
 
 A task that raises is retried up to `max_retries` times, waiting `tries²`

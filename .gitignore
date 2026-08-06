@@ -26,3 +26,4 @@ TODO.md
 .vscode
 .ruff_cache
 .pytest_cache
+.codegraph

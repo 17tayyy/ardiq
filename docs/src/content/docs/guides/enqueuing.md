@@ -48,6 +48,24 @@ await queue.ref("build_report", priority="low").enqueue(7)   # a default lane fo
 
 A `ref` can be enqueued but not called — there is no local function behind it.
 
+:::caution[Priority does not travel with the name]
+Everything else on `@app.task(...)` — `max_retries`, `backoff_ms`, `timeout` — is applied
+by the worker, which has the registry and can look it up. Priority is the exception: it
+picks which stream the task goes into, so it is settled by the producer, before the
+payload leaves.
+
+A task declared `@app.task(priority="high")` and dispatched by name lands in the app's
+[`default_priority`](/guides/tasks/#priorities) instead, with no warning. Pass it at the
+call site:
+
+```python
+await queue.ref("build_report", priority="high").enqueue(7)
+```
+
+The fallback being the middle lane makes forgetting it survivable rather than disastrous,
+but the work still won't be in the lane you declared for it.
+:::
+
 ## Per-call options
 
 For one-off overrides, chain `.options(...)` before `.enqueue(...)`:
