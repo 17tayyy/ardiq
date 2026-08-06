@@ -5,6 +5,12 @@ from typing import Any
 
 Executor = Callable[[str, bytes, int, bool], Awaitable[tuple[int, bytes, int]]]
 
+class ArdiqError(RuntimeError):
+    """Base class for the errors ArdiQ's core raises."""
+
+class BrokerError(ArdiqError):
+    """Redis was unreachable, refused the connection, or dropped it."""
+
 def init_logging(verbose: bool) -> None: ...
 
 class ArdiqCore:

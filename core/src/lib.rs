@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
+use pyo3::create_exception;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -18,6 +19,19 @@ use crate::queue::{now_ms, Queue, ResultTtl};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
 const DEFAULT_ABORT_MARKER_MS: i64 = 300_000;
+
+create_exception!(
+    ardiq,
+    ArdiqError,
+    PyRuntimeError,
+    "Base class for the errors ArdiQ's core raises."
+);
+create_exception!(
+    ardiq,
+    BrokerError,
+    ArdiqError,
+    "Redis was unreachable, refused the connection, or dropped it."
+);
 
 struct PyExecutor {
     callback: Py<PyAny>,
@@ -476,8 +490,12 @@ fn default_worker_id() -> String {
     format!("{:08x}", (nanos as u64) & 0xffff_ffff)
 }
 
-fn to_py_err<E: std::fmt::Display>(err: E) -> PyErr {
-    PyRuntimeError::new_err(err.to_string())
+fn to_py_err(err: redis::RedisError) -> PyErr {
+    if err.is_io_error() {
+        BrokerError::new_err(err.to_string())
+    } else {
+        ArdiqError::new_err(err.to_string())
+    }
 }
 
 /// Install a tracing subscriber that forwards Rust logs to stderr.
@@ -500,5 +518,7 @@ fn init_logging(verbose: bool) {
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArdiqCore>()?;
     m.add_function(wrap_pyfunction!(init_logging, m)?)?;
+    m.add("ArdiqError", m.py().get_type::<ArdiqError>())?;
+    m.add("BrokerError", m.py().get_type::<BrokerError>())?;
     Ok(())
 }

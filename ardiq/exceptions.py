@@ -1,6 +1,9 @@
-"""Exceptions a task raises to steer its own execution."""
+"""What ArdiQ raises: broker failures from the core, and `Retry` from a task."""
 
 from __future__ import annotations
+
+from ardiq._core import ArdiqError as ArdiqError
+from ardiq._core import BrokerError as BrokerError
 
 
 class Retry(Exception):
