@@ -27,6 +27,8 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
 - **Enqueue by name** (`app.send("task", ...)`) — producers never import the task module
 - **Error hooks** (`@app.on_error`) — send every failed attempt to Sentry or your own reporter
+- **Typed failures** (`BrokerError`) — catch "Redis is down" without a blanket `except`
+- **Unique task names**, enforced at registration — a duplicate raises instead of silently shadowing
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
 - **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
@@ -229,6 +231,20 @@ It fires on timeouts, on every retry, and when a worker is handed a task it
 doesn't know. It does **not** fire on abort, nor for a `Retry` you raised
 yourself — only when that `Retry` finally gives up. Hooks run on the worker's
 event loop, so keep them quick.
+
+When *Redis* is what failed — unreachable, refusing or dropping connections — the
+call raises `BrokerError` (`→ ArdiqError → RuntimeError`), so an enqueue in a
+request handler can be caught precisely instead of with a bare `except
+RuntimeError`:
+
+```python
+from ardiq import BrokerError
+
+try:
+    job = await queue.send("build_report", user_id)
+except BrokerError:
+    raise HTTPException(503, "queue unavailable")
+```
 
 ## Shared resources (lifespan)
 

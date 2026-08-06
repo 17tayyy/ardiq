@@ -24,6 +24,7 @@ app = Ardiq(
 | `redis_url` | `redis://localhost:6379` | Redis connection URL. |
 | `queue_name` | `"default"` | Logical queue — namespaces all Redis keys for this app. |
 | `priorities` | `["default"]` | Priority lane names, **lowest-first**. Higher lanes drain first. |
+| `default_priority` | the middle lane | Where a task with no `priority` goes. Must be one of `priorities`. |
 | `concurrency` | `16` | Max tasks running at once in a worker. |
 | `prefetch` | `concurrency * 2` | Max tasks held in memory; drives backpressure against Redis. |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed by another worker. |

@@ -43,6 +43,35 @@ A retry goes back through the delayed queue, and `--burst` exits once the queue 
 instead of waiting for work that isn't due yet. Retries need a long-running worker.
 :::
 
+## When the broker itself fails
+
+Everything above is about a task failing. When *Redis* is the problem — unreachable,
+refusing connections, dropping them — the call that touched it raises `BrokerError`,
+so an enqueue in a request handler can be caught precisely:
+
+```python
+from ardiq import BrokerError
+
+
+@api.post("/reports")
+async def create_report(user_id: int):
+    try:
+        job = await queue.send("build_report", user_id)
+    except BrokerError:
+        raise HTTPException(503, "queue unavailable")
+    return {"job_id": job.id}
+```
+
+The hierarchy is `BrokerError` → `ArdiqError` → `RuntimeError`:
+
+- **`BrokerError`** — an operational failure reaching Redis. Retryable; the broker is
+  down, not your code.
+- **`ArdiqError`** — anything else the core raises, such as a malformed `redis_url`.
+  Catch this to mean "ArdiQ failed" without catching unrelated bugs.
+
+It still subclasses `RuntimeError`, so code written against older versions keeps
+working.
+
 ## Reporting errors
 
 `@app.on_error` registers a hook that runs on every failed attempt, before ArdiQ decides

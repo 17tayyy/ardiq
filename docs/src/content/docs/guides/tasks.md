@@ -62,6 +62,54 @@ async def send_welcome(user_id: int) -> None:
     ...
 ```
 
+## Names must be unique
+
+A task's name is its identity on the wire, and by default it is just the function's
+`__name__` — not the module path. Registering the same name twice raises, naming the
+module that already owns it:
+
+```python
+# whatsapp.py
+@app.task()
+def forward_message(...): ...
+
+# twilio.py — importing this now raises at import time
+@app.task()
+def forward_message(...): ...
+# ValueError: task 'forward_message' is already registered by myapp.whatsapp — ...
+```
+
+This is deliberate: a queue that let the second registration win would silently stop
+running the first task, with no error and no log line, and you would find out from the
+work that never happened. `@app.cron` shares the registry, so a cron and a task cannot
+collide either.
+
+Give one of them an explicit name — namespacing by module is a good habit:
+
+```python
+@app.task(name="whatsapp.forward_message")
+def forward_message(...): ...
+```
+
+## Knowing which task you are
+
+`current_task()` returns the task running right now — its id, name and attempt number —
+so a task can put them in its own logs without being handed them:
+
+```python
+from ardiq import current_task
+
+
+@app.task(max_retries=3)
+async def charge(order_id: int) -> None:
+    task = current_task()
+    log.info("charging %s", order_id, extra={"task_id": task and task.task_id})
+```
+
+It works from sync tasks too — the context rides along into the worker's thread — and
+from anything the task calls. Outside a worker it returns `None`, like
+`asyncio.current_task()`, so a shared logging helper can call it anywhere.
+
 ## Retries
 
 When a task raises, ArdiQ retries it up to `max_retries` times before recording a failure.
@@ -109,6 +157,18 @@ async def urgent(...): ...
 # override per call
 await urgent.options(priority="low").enqueue(...)
 ```
+
+A task that names no lane goes to the **middle** one — `default` in the example above.
+Set `default_priority` to choose it yourself:
+
+```python
+app = Ardiq(priorities=["low", "high"], default_priority="low")
+```
+
+With an even number of lanes the middle rounds *up*, so `["low", "high"]` defaults to
+`high`: forgetting `priority=` should never quietly demote work, because demoted work
+still completes and nothing tells you it happened. `app.default_priority` reports the
+lane in force.
 
 See [Enqueuing & scheduling](/guides/enqueuing/) for per-call overrides.
 

@@ -35,6 +35,7 @@ Constructor arguments are documented in [Configuration](/reference/configuration
 | Property | Type | Description |
 |---|---|---|
 | `worker_id` | `str` | This worker's id (set by the core). |
+| `default_priority` | `str` | The lane a task with no `priority` lands in. |
 | `burst` | `bool` | Read/write; when `True` the loop exits once the queue drains. |
 | `tasks` | `list[str]` | Names of the registered tasks. |
 
@@ -194,6 +195,23 @@ A `NamedTuple` handed to every `@app.on_error` hook; see
 | `exc` | `BaseException` | The exception the attempt raised. |
 | `tries` | `int` | The attempt that just failed, counting from 1. |
 | `will_retry` | `bool` | Whether another attempt is coming. |
+
+## `TaskContext`
+
+A `NamedTuple` describing the task running right now, returned by `current_task()` —
+`None` outside a worker. See [Knowing which task you are](/guides/tasks/#knowing-which-task-you-are).
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `str` | The job id. |
+| `name` | `str` | The task's registered name. |
+| `tries` | `int` | The attempt in progress, counting from 1. |
+
+## `ArdiqError` / `BrokerError`
+
+`BrokerError` → `ArdiqError` → `RuntimeError`. `BrokerError` means Redis was
+unreachable; `ArdiqError` is anything else the core raises. See
+[When the broker itself fails](/guides/errors/#when-the-broker-itself-fails).
 
 ## `Retry`
 
