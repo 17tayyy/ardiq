@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
 use redis::aio::{ConnectionManager, MultiplexedConnection};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::queue::{now_ms, Queue, ResultTtl, StreamMessage};
@@ -57,6 +57,7 @@ pub struct Worker {
 #[derive(Clone)]
 struct RunState {
     permits: Arc<AtomicI64>,
+    permit_freed: Arc<Notify>,
     in_flight: Arc<Mutex<HashMap<String, (String, String)>>>,
 }
 
@@ -97,6 +98,7 @@ impl Worker {
 
         let state = RunState {
             permits: Arc::new(AtomicI64::new(self.config.prefetch)),
+            permit_freed: Arc::new(Notify::new()),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         };
         let (tx, rx) =
@@ -155,6 +157,7 @@ impl Worker {
         let worker_id = &self.config.worker_id;
         while !self.cancel.is_cancelled() {
             let count = state.permits.load(Ordering::Acquire).max(0);
+            let read_attempted = count > 0;
 
             let mut messages = Vec::new();
             if count > 0 {
@@ -171,6 +174,7 @@ impl Worker {
             } else {
                 tokio::select! {
                     _ = self.cancel.cancelled() => break,
+                    _ = state.permit_freed.notified() => {}
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {}
                 }
             }
@@ -185,6 +189,7 @@ impl Worker {
             let promoted = self.queue.publish_delayed(&mut conn, now_ms()).await?;
 
             if self.config.burst
+                && read_attempted
                 && messages.is_empty()
                 && promoted == 0
                 && state.permits.load(Ordering::Acquire) >= self.config.prefetch
@@ -212,6 +217,7 @@ impl Worker {
             };
             self.run_task(msg, &state, &mut conn).await;
             state.permits.fetch_add(1, Ordering::AcqRel); // free a slot for the producer
+            state.permit_freed.notify_one();
         }
     }
 
