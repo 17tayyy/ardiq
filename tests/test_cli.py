@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from ardiq import cli
 from ardiq.cli import build_parser, import_string, main, serve
 
 
@@ -36,6 +37,28 @@ def test_cli_run_parses_flags():
     assert args.burst is True
     assert args.quiet is True
     assert args.verbose is False
+
+
+def test_exit_without_finalizing_flushes_first(monkeypatch):
+    # atexit before the hard exit, or Sentry and coverage lose their last write.
+    calls = []
+    monkeypatch.setattr(cli.atexit, "_run_exitfuncs", lambda: calls.append("atexit"))
+    monkeypatch.setattr(cli.logging, "shutdown", lambda: calls.append("logging"))
+    monkeypatch.setattr(cli.os, "_exit", lambda code: calls.append(("exit", code)))
+
+    cli._exit_without_finalizing()
+
+    assert calls == ["atexit", "logging", ("exit", 0)]
+
+
+def test_console_main_exits_but_main_returns(monkeypatch):
+    order = []
+    monkeypatch.setattr(cli, "main", lambda: order.append("main"))
+    monkeypatch.setattr(cli, "_exit_without_finalizing", lambda: order.append("exit"))
+
+    cli.console_main()
+
+    assert order == ["main", "exit"]
 
 
 def test_import_string_loads_attr():

@@ -1,4 +1,4 @@
-from ardiq.cli import main
+from ardiq.cli import console_main
 
 if __name__ == "__main__":
-    main()
+    console_main()

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import contextlib
 import importlib
 import logging
+import os
 import signal
 import sys
 from typing import TYPE_CHECKING
@@ -113,3 +115,24 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help(sys.stderr)
         raise SystemExit(1)
     _run(args)
+
+
+def _exit_without_finalizing() -> None:
+    """Leave the process without tearing the interpreter down.
+
+    The core's tokio threads outlive the worker, and a Python reference
+    released from one of them while CPython finalizes segfaults for about 1% of
+    workers under load. `atexit` handlers still run, so Sentry and coverage
+    flush as usual.
+    """
+    atexit._run_exitfuncs()
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+
+
+def console_main() -> None:
+    """Entry point for the `ardiq` command. `main` stays importable and returns."""
+    main()
+    _exit_without_finalizing()
