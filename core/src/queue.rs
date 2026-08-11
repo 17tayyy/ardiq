@@ -6,6 +6,15 @@ use redis::streams::{StreamAutoClaimReply, StreamReadReply};
 use redis::{RedisResult, Script};
 
 const GROUP: &str = "workers";
+const BATCH_CHUNK: usize = 1000;
+
+pub struct StagedTask {
+    pub task_id: String,
+    pub payload: Vec<u8>,
+    pub priority: String,
+    pub score_ms: i64,
+    pub expire_ms: i64,
+}
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -45,6 +54,7 @@ pub struct Queue {
     prefix: String,
     stream_to_priority: HashMap<String, String>,
     publish_task: Script,
+    publish_tasks: Script,
     publish_delayed: Script,
     abort_task: Script,
 }
@@ -67,6 +77,7 @@ impl Queue {
             prefix,
             stream_to_priority,
             publish_task: Script::new(include_str!("scripts/publish_task.lua")),
+            publish_tasks: Script::new(include_str!("scripts/publish_tasks.lua")),
             publish_delayed: Script::new(include_str!("scripts/publish_delayed.lua")),
             abort_task: Script::new(include_str!("scripts/abort_task.lua")),
         }
@@ -153,6 +164,32 @@ impl Queue {
             .invoke_async(conn)
             .await?;
         Ok(queued == 1)
+    }
+
+    pub async fn enqueue_many<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        items: &[StagedTask],
+        now_ms: i64,
+    ) -> RedisResult<Vec<bool>> {
+        let mut staged = Vec::with_capacity(items.len());
+        for chunk in items.chunks(BATCH_CHUNK) {
+            let mut invocation = self.publish_tasks.prepare_invoke();
+            invocation.arg(now_ms);
+            for task in chunk {
+                invocation
+                    .arg(self.task_key(&task.task_id))
+                    .arg(self.stream_key(&task.priority))
+                    .arg(self.delayed_key(&task.priority))
+                    .arg(&task.task_id)
+                    .arg(&task.payload)
+                    .arg(task.score_ms)
+                    .arg(task.expire_ms);
+            }
+            let results: Vec<i64> = invocation.invoke_async(conn).await?;
+            staged.extend(results.into_iter().map(|queued| queued == 1));
+        }
+        Ok(staged)
     }
 
     pub async fn publish_delayed<C: ConnectionLike>(

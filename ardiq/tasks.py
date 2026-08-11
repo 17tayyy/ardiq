@@ -70,6 +70,10 @@ class Task[**P, R]:
         """Dispatch the task with these args; returns a `Job` handle."""
         return await self.app._enqueue(self.name, args, kwargs, priority=self.priority)
 
+    def prepare(self, *args: P.args, **kwargs: P.kwargs) -> PreparedTask:
+        """The call `.enqueue` would make, without making it — for `enqueue_many`."""
+        return PreparedTask(self.name, args, kwargs, None, self.priority, 0, 0, 0)
+
     def options(
         self,
         *,
@@ -105,3 +109,34 @@ class _BoundTask[**P, R]:
             schedule_ms=self.schedule_ms,
             expire_ms=self.expire_ms,
         )
+
+    def prepare(self, *args: P.args, **kwargs: P.kwargs) -> PreparedTask:
+        """The call `.enqueue` would make, without making it — for `enqueue_many`."""
+        return PreparedTask(
+            self.task.name,
+            args,
+            kwargs,
+            self.task_id,
+            self.priority or self.task.priority,
+            self.delay_ms,
+            self.schedule_ms,
+            self.expire_ms,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedTask:
+    """One enqueue, held back so `Ardiq.enqueue_many` can send a batch at once.
+
+    Built by `Task.prepare` / `Task.options(...).prepare`, which check the
+    arguments against the task's signature exactly as `.enqueue` does.
+    """
+
+    name: str
+    args: tuple
+    kwargs: dict
+    task_id: str | None
+    priority: str | None
+    delay_ms: int
+    schedule_ms: int
+    expire_ms: int

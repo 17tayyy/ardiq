@@ -8,7 +8,7 @@ import inspect
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, overload
@@ -26,7 +26,7 @@ from ardiq.models import (
     TaskInfo,
     TaskResult,
 )
-from ardiq.tasks import Job, Task
+from ardiq.tasks import Job, PreparedTask, Task
 
 # Outcome codes for the Rust core's executor protocol.
 SUCCESS, FAILURE, RETRY = 0, 1, 2
@@ -330,6 +330,36 @@ class Ardiq:
         Nothing checks the name here — an unknown one fails on the worker.
         """
         return await self._enqueue(name, args, kwargs)
+
+    async def enqueue_many(self, tasks: Iterable[PreparedTask]) -> list[Job]:
+        """Send tasks built with `.prepare()` in one round trip, not one each.
+
+        Returns their `Job`s in the order given. Lanes are validated across the
+        whole batch first, so a bad `priority` fails the call instead of leaving
+        half of it enqueued.
+        """
+        prepared = list(tasks)
+        for task in prepared:
+            self._check_priority(task.priority)
+
+        items, jobs = [], []
+        for task in prepared:
+            job_id = task.task_id or uuid.uuid4().hex
+            items.append(
+                (
+                    job_id,
+                    self._pack(task.name, task.args, task.kwargs),
+                    task.priority or self._default_priority,
+                    task.delay_ms,
+                    task.schedule_ms,
+                    task.expire_ms,
+                )
+            )
+            jobs.append(Job(self, job_id))
+
+        if items:
+            await self._core.enqueue_many(items)
+        return jobs
 
     async def _enqueue(
         self,

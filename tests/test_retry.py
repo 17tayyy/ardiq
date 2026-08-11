@@ -40,7 +40,9 @@ async def test_terminal_failure(redis, make_app):
     ("retry_after_ms", "min_gap", "max_gap"),
     [(0, 0.9, 2.5), (50, 0.0, 0.6)],  # default tries²·1000 backoff vs explicit
 )
-async def test_retry_mechanism(redis, make_core, poll, retry_after_ms, min_gap, max_gap):
+async def test_retry_mechanism(
+    redis, make_core, poll, retry_after_ms, min_gap, max_gap
+):
     tries_seen: list[int] = []
     stamps: list[float] = []
 

@@ -10,8 +10,6 @@ def _pack(app, fn_name, args=(), kwargs=None):
     return app._dumps({"f": fn_name, "a": list(args), "k": kwargs or {}, "t": 0})
 
 
-
-
 async def test_aborted_at_pickup_skips_the_task(make_app, caplog):
     app = make_app("abort_pickup")
     ran = []
@@ -75,7 +73,6 @@ async def test_successful_task_is_deregistered(make_app):
 
     assert outcome == 0  # SUCCESS
     assert app._running == {}
-
 
 
 async def test_abort_delayed_task_finalizes_immediately(redis, make_app):

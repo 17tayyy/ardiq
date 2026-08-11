@@ -15,10 +15,12 @@ use redis::aio::ConnectionManager;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
-use crate::queue::{now_ms, Queue, ResultTtl};
+use crate::queue::{now_ms, Queue, ResultTtl, StagedTask};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
 const DEFAULT_ABORT_MARKER_MS: i64 = 300_000;
+
+type EnqueueItem = (String, Vec<u8>, Option<String>, i64, i64, i64);
 
 create_exception!(
     ardiq,
@@ -217,6 +219,44 @@ impl ArdiqCore {
                 .enqueue(
                     &mut conn, &task_id, &payload, &priority, score, expire_ms, now,
                 )
+                .await
+                .map_err(to_py_err)?;
+            Ok(queued)
+        })
+    }
+
+    fn enqueue_many<'py>(
+        &self,
+        py: Python<'py>,
+        items: Vec<EnqueueItem>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let now = now_ms();
+            let staged: Vec<StagedTask> = items
+                .into_iter()
+                .map(
+                    |(task_id, payload, priority, delay_ms, schedule_ms, expire_ms)| StagedTask {
+                        task_id,
+                        payload,
+                        priority: priority.unwrap_or_else(|| queue.default_priority().to_string()),
+                        score_ms: if schedule_ms > 0 {
+                            schedule_ms
+                        } else if delay_ms > 0 {
+                            now + delay_ms
+                        } else {
+                            0
+                        },
+                        expire_ms,
+                    },
+                )
+                .collect();
+            let queued = queue
+                .enqueue_many(&mut conn, &staged, now)
                 .await
                 .map_err(to_py_err)?;
             Ok(queued)

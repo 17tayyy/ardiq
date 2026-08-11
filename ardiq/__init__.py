@@ -12,7 +12,7 @@ from ardiq.app import Ardiq
 from ardiq.context import current_task
 from ardiq.exceptions import ArdiqError, BrokerError, Retry
 from ardiq.models import ErrorContext, State, TaskContext, TaskInfo, TaskResult
-from ardiq.tasks import Job, Task
+from ardiq.tasks import Job, PreparedTask, Task
 
 __all__ = [
     "Ardiq",
@@ -20,6 +20,7 @@ __all__ = [
     "BrokerError",
     "ErrorContext",
     "Job",
+    "PreparedTask",
     "Retry",
     "State",
     "Task",

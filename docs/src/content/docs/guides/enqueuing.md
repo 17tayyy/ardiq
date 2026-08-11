@@ -66,6 +66,37 @@ The fallback being the middle lane makes forgetting it survivable rather than di
 but the work still won't be in the lane you declared for it.
 :::
 
+## Enqueuing in bulk
+
+One `.enqueue()` is one round trip to Redis. Fanning out over a list, that adds
+up — 20,000 of them take about 2.7s. `enqueue_many` sends the whole batch
+instead, and the same 20,000 take **0.17s**.
+
+Build each call with `.prepare(...)` — same arguments `.enqueue` takes, checked
+against the task's signature the same way — and hand the lot to the app:
+
+```python
+jobs = await queue.enqueue_many(charge.prepare(oid) for oid in order_ids)
+```
+
+It takes any iterable, so a generator is fine for large fan-outs. You get back
+one `Job` per item, in the order you gave them.
+
+A batch can mix tasks and per-call options freely — that is the point of
+separating `prepare` from `enqueue`:
+
+```python
+await queue.enqueue_many([
+    charge.prepare(42),
+    send_receipt.prepare("customer@example.com"),
+    reindex.options(priority="high").prepare(42),
+])
+```
+
+Priorities are validated across the whole batch *before* anything is sent, so a
+lane nobody reads raises and enqueues nothing, rather than leaving half the
+batch in Redis.
+
 ## Per-call options
 
 For one-off overrides, chain `.options(...)` before `.enqueue(...)`:

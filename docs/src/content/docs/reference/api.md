@@ -134,6 +134,31 @@ overrides. See [Enqueuing & scheduling](/guides/enqueuing/#per-call-options).
 await add.options(priority="high", delay_ms=5000).enqueue(2, 3)
 ```
 
+### `task.prepare(*args, **kwargs)`
+
+```python
+def prepare(*args, **kwargs) -> PreparedTask
+```
+
+The call `.enqueue` would make, held back so `enqueue_many` can send a batch in
+one round trip. Available on `.options(...)` too. Arguments are checked against
+the task's signature exactly as `.enqueue` checks them.
+
+### `await app.enqueue_many(tasks)`
+
+```python
+async def enqueue_many(tasks: Iterable[PreparedTask]) -> list[Job]
+```
+
+Sends prepared tasks in one round trip and returns their `Job`s in order. Any
+iterable works, including a generator. Priorities are validated across the whole
+batch before anything is sent. See
+[Enqueuing in bulk](/guides/enqueuing/#enqueuing-in-bulk).
+
+```python
+jobs = await queue.enqueue_many(charge.prepare(oid) for oid in order_ids)
+```
+
 ## `Job`
 
 An immutable handle to an enqueued task — just the app plus an id.
