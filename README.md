@@ -21,9 +21,28 @@
 
 ---
 
-A fast distributed task queue with a **Rust core** and a clean **Python API**, backed by Redis streams.
+### A featherweight task queue for Python, with a Rust core.
 
-ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs) + [tokio](https://tokio.rs)); you write tasks in plain Python. The two meet at a single async callback, with the GIL held only for the microseconds it takes to start a task and read its result — so a single process handles high concurrency.
+ArdiQ runs the worker loop and every Redis round-trip in Rust ([PyO3](https://pyo3.rs) +
+[tokio](https://tokio.rs)), off the GIL; you write tasks in plain Python. The two meet at a
+single async callback, with the GIL held only for the microseconds it takes to start a task
+and read its result — so one process takes a lot of work without asking for much in return.
+
+Batteries included: priorities, cron, delayed and scheduled tasks, retries with backoff,
+aborts, results, and enqueue that type-checks against your task's signature.
+
+Measured against five other Redis-backed queues on the same machine, same sitting:
+
+| Tasks/s | ArdiQ | Taskiq | Streaq | arq | Dramatiq | Celery |
+|---------|------:|-------:|-------:|----:|---------:|-------:|
+| **CPU-bound**   | **394** | 356 | 322 | 283 | 12.5 | 12.5 |
+| **Dispatch**    | **2,895** | 2,051 | 1,179 | 789 | 1,787 | 861 |
+| **I/O-bound**   | 95.3 | **96.9** | 91.8 | 87.6 | 94.1 | 71.2 |
+| **Enqueuing**   | **81,636** | 2,503 | 27,433 | 999 | 2,711 | 1,886 |
+| **Memory**      | 33 MB | 91 MB | 48 MB | **30 MB** | 56 MB | 50 MB |
+
+Only arq is lighter, and it is last or second-to-last on every workload. The short version:
+everything faster than ArdiQ here is heavier, and everything lighter is slower.
 
 ## Features
 
@@ -44,38 +63,43 @@ ArdiQ runs the worker loop and all Redis I/O in Rust (via [PyO3](https://pyo3.rs
 
 ## Performance
 
-Because the worker loop and every Redis round-trip run in Rust — off the GIL —
-ArdiQ delivers **near-top throughput at the lowest memory of any fast queue**.
-Nothing in the suite beats it on throughput *and* memory at once.
+Six queues, one machine, one sitting, three workloads, three interleaved rounds
+each — one worker per library, 10 concurrent tasks, Redis on localhost.
 
-Benchmarked head-to-head against arq, Taskiq, Streaq, Celery and Dramatiq on the
-same machine (1,000 tasks, one worker, 10 concurrent, 6 interleaved rounds):
+**CPU-bound** (1,000 tasks of ~2.4 ms of hashing): **394 tasks/s**, ahead of
+Taskiq's 356 and Streaq's 322. **10% faster than the next queue, on a third of
+its memory.**
 
-| Queue        | I/O tasks/s | CPU tasks/s | Memory       |
-|--------------|-------------|-------------|--------------|
-| Taskiq       | 97.8        | 424.9       | 91 MB        |
-| **ArdiQ** 🦀 | **96.6**    | **375.7**   | **33 MB** 🪶 |
-| Streaq       | 94.1        | 378.2       | 48 MB        |
-| arq          | 88.5        | 344.7       | 30 MB        |
+**Dispatch** (20,000 tasks that do nothing — the queue's own overhead and
+nothing else): **2,895 tasks/s** against Taskiq's 2,051. **41% ahead**, and the
+tightest tail latency in the field: p99 of 6,820 ms ±127, where Taskiq swings to
+9,292.
 
-- 🪶 **Lightest of the fast queues** — a third of Taskiq's memory, two thirds of
-  Streaq's, at the same CPU throughput as Streaq.
-- ⚡ **Best work per megabyte**, tied with arq — while running 9% faster than it
-  on both workloads.
-- 🎯 **Predictable tail latency** — p99 of 2,609 ms ±21 on CPU work, where the
-  other async queues swing ±1,000 ms between rounds.
-- 📈 **Within 1.2% of the ceiling** on I/O work — practically network-bound.
+**I/O-bound** (1,000 tasks of 100 ms): 95.3 tasks/s, second to Taskiq's 96.9 —
+1.7% apart, in a scenario whose arithmetic ceiling is 100. There is nothing left
+to win here and we are 95% of the way to it.
 
-Not the fastest in raw throughput: Taskiq is 13% quicker on CPU-bound
-micro-tasks, and spends 91 MB doing it. ArdiQ pays about **0.3 ms per task** to
-cross the Rust/Python boundary — 13% of a 2.4 ms task, 0.3% of a 100 ms one,
-which is why it wins on I/O and trades on CPU.
+**Enqueuing** (staging 20,000 tasks): **81,636 tasks/s**. Streaq, the only other
+queue here with a bulk API, does 27,433. For a web handler that fans work out
+mid-request, that is the difference between 0.2 s and 7 s of blocked request.
 
-> Throughput is shaped by hardware and workload, and the GIL caps in-process CPU
-> work for *every* Python queue (ArdiQ included). The full, reproducible suite —
-> with the honest caveats — lives in the
-> [benchmark repo](https://github.com/17tayyy/python-task-queue-benchmarks), and
-> the breakdown is in the [performance guide](https://ardiq.bytay.dev/guides/performance/).
+**Memory**: 33 MB resident per worker. Taskiq spends 91 MB, Dramatiq 56, Celery
+50, Streaq 48. Only arq is leaner at 30 MB — and arq is last or second-to-last
+on all three workloads.
+
+Read the caveats, because they matter and they are ours to state:
+
+- **Celery and Dramatiq's CPU numbers (12.5 tasks/s) are an artifact** of this
+  16-thread box: prefork workers thrash the GIL harder the more cores you give
+  them. On a laptop they land near 55. Do not read that row as a 30× win.
+- **The GIL caps in-process CPU work for every Python queue, ArdiQ included.**
+  Your task body is serial per worker. Scale out with processes.
+- **Absolute numbers do not travel between machines.** Compare rows within a
+  table, never against someone else's hardware.
+
+The suite is public and reproducible, including the parts where we lose:
+[benchmark repo](https://github.com/17tayyy/python-task-queue-benchmarks) ·
+[performance guide](https://ardiq.bytay.dev/guides/performance/).
 
 ## When to use ArdiQ
 
@@ -99,8 +123,10 @@ which is why it wins on I/O and trades on CPU.
   integrations, schedulers, and dashboards. ArdiQ is young and moving fast.
 - **You can't run Redis** — ArdiQ is Redis-only by design.
 
-ArdiQ sits alongside **arq / Taskiq / Streaq** as a modern async queue — its edge
-is the Rust core (memory and per-task overhead) and a batteries-included API.
+Against the other modern async queues — **arq, Taskiq, Streaq** — the edge is
+the Rust core: it moves more tasks per second and holds a third of the memory
+while doing it, and the API arrives with priorities, cron, retries, aborts and
+typed enqueue already in the box.
 
 ## Installation
 
@@ -412,10 +438,21 @@ After changing the Rust core, rebuild with `uv sync --reinstall-package ardiq`.
 
 ## Contributing
 
-Bug reports, docs fixes and features are all welcome — see
+ArdiQ is young, and that is the good part: the decisions that shape a task queue
+are still open, and the person who hits a rough edge first gets to decide how it
+gets fixed. Two of this month's releases came straight out of somebody porting a
+live Celery app over and writing down what hurt.
+
+**The most useful thing you can do is use it and tell us what broke.** After
+that: bug reports, docs fixes, and features are all welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the layout of the codebase and
-what to open an issue about first. Questions and ideas go in
+what to open an issue about first. Questions, ideas and "is this supposed to
+work like this?" go in
 [Discussions](https://github.com/17tayyy/ardiq/discussions).
+
+If you want something bigger to sink your teeth into, `unique` task locks and
+multiprocess workers (`--workers N`) are the two things standing between ArdiQ
+and 1.0.
 
 ## License
 

@@ -1,7 +1,10 @@
 ---
-title: ArdiQ — fast Python task queue with a Rust core
-description: A fast distributed task queue with a Rust core and a clean Python API, backed by Redis streams.
+title: ArdiQ — a featherweight Python task queue with a Rust core
+description: "A featherweight task queue for Python with a Rust core: high throughput on a tiny memory footprint, backed by Redis Streams. Priorities, cron, retries, aborts and typed enqueue included."
 template: splash
+head:
+  - tag: title
+    content: ArdiQ — a featherweight Python task queue with a Rust core
 ---
 
 import { Card, CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/components';
@@ -10,10 +13,10 @@ import logoLight from '../../assets/ardiq-logo.png';
 import logoDark from '../../assets/ardiq-logo-dark.png';
 
 <div class="landing-hero">
-	<h1 id="_top" class="sr-only">ArdiQ</h1>
+	<h1 id="_top" class="sr-only">ArdiQ — a featherweight Python task queue with a Rust core</h1>
 	<Image src={logoLight} alt="ArdiQ" class="landing-logo dark:sl-hidden" loading="eager" />
 	<Image src={logoDark} alt="ArdiQ" class="landing-logo light:sl-hidden" loading="eager" />
-	<p class="landing-tagline">A fast distributed task queue with a Rust core and a clean Python API, backed by Redis streams.</p>
+	<p class="landing-tagline">A featherweight task queue for Python, with a Rust core.</p>
 	<p class="hero-badges">
 		<a href="https://pypi.org/project/ardiq/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/ardiq.svg" /></a>
 		<a href="https://pypi.org/project/ardiq/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/ardiq.svg" /></a>
@@ -26,15 +29,28 @@ import logoDark from '../../assets/ardiq-logo-dark.png';
 	</div>
 </div>
 
-ArdiQ runs the worker loop and all Redis I/O in **Rust** (via [PyO3](https://pyo3.rs) +
-[tokio](https://tokio.rs)); you write tasks in plain **Python**. The two meet at a single
-async callback, with the GIL held only for the microseconds it takes to start a task and
-read its result — so a single process handles high concurrency on a tiny memory footprint.
+ArdiQ runs the worker loop and every Redis round-trip in **Rust** (via [PyO3](https://pyo3.rs) +
+[tokio](https://tokio.rs)), off the GIL; you write tasks in plain **Python**. The two meet at a
+single async callback, with the GIL held only for the microseconds it takes to start a task and
+read its result — so one process takes a lot of work without asking for much in return.
+
+Measured against five other Redis-backed queues on the same machine, same sitting:
+
+| Tasks/s | ArdiQ | Taskiq | Streaq | arq | Dramatiq | Celery |
+|---------|------:|-------:|-------:|----:|---------:|-------:|
+| **CPU-bound** | **394** | 356 | 322 | 283 | 12.5 | 12.5 |
+| **Dispatch** | **2,895** | 2,051 | 1,179 | 789 | 1,787 | 861 |
+| **I/O-bound** | 95.3 | **96.9** | 91.8 | 87.6 | 94.1 | 71.2 |
+| **Enqueuing** | **81,636** | 2,503 | 27,433 | 999 | 2,711 | 1,886 |
+| **Memory** | 33 MB | 91 MB | 48 MB | **30 MB** | 56 MB | 50 MB |
+
+The [performance guide](/guides/performance/) has the caveats, including the two rows where
+the numbers flatter us and shouldn't.
 
 <CardGrid stagger>
 	<Card title="Rust core, off the GIL" icon="rocket">
-		The loop and every Redis round-trip run on tokio, in Rust — top-tier
-		throughput at roughly a third of the memory of comparable queues.
+		The loop and every Redis round-trip run on tokio, in Rust — heavy
+		concurrency without the memory bill.
 	</Card>
 	<Card title="Batteries included" icon="setting">
 		Priorities, delayed, scheduled & cron tasks, automatic retries with

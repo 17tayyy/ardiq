@@ -4,7 +4,7 @@ import starlight from "@astrojs/starlight";
 
 const site = "https://ardiq.bytay.dev";
 const description =
-  "A fast distributed task queue with a Rust core and a clean Python API, backed by Redis streams.";
+  "A featherweight task queue for Python with a Rust core: high throughput on a tiny memory footprint, backed by Redis Streams. Priorities, cron, retries, aborts and typed enqueue included.";
 
 export default defineConfig({
   site,
