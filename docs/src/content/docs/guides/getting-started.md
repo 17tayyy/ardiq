@@ -5,8 +5,26 @@ description: Install ArdiQ, start Redis, write your first task, and run a worker
 
 ## Requirements
 
-- **Python 3.12+**
+- **Python 3.12+** (3.13+ recommended — see the note below)
 - A **Redis** server (ArdiQ uses Redis streams as its broker and result store).
+
+:::caution[On Python 3.12, a process that enqueues can crash as it exits]
+ArdiQ's core keeps Rust threads that outlive your code. When CPython 3.12 tears
+the interpreter down, one of those threads can release a Python reference a
+moment too late and the process dies with a segmentation fault — **after** its
+work is done. Nothing is lost: every task is enqueued, run and stored before
+this can happen; only the exit code is wrong.
+
+It needs many processes exiting at once to show up at all (measured: 12% of 100
+simultaneous producers, never once when run one at a time), and **Python 3.13
+and up are unaffected** — CPython gained the check that PyO3 needs to refuse the
+unsafe release. The `ardiq` worker command is not affected on any version: it
+exits without finalizing the interpreter, precisely because of this.
+
+So if you fan out short-lived processes that enqueue and exit — cron jobs,
+scripts, CI steps — prefer 3.13+. The upstream gap is tracked in
+[pyo3-async-runtimes#40](https://github.com/PyO3/pyo3-async-runtimes/issues/40).
+:::
 
 ## Install
 
