@@ -64,6 +64,16 @@ code: a crashed worker fails the whole deployment rather than quietly running
 short-handed. Under `--burst` every worker exits when the queue is drained and
 the supervisor exits `0`.
 
+:::caution[Graceful stops are a Unix guarantee]
+Stopping a child is a `SIGTERM`, which it handles by finishing the tasks it
+holds. Windows has no equivalent, so there the supervisor's stop is a hard kill
+and whatever those workers were running is left unacknowledged. Nothing is lost:
+another worker reclaims it after
+[`idle_timeout_ms`](/reference/configuration/). ArdiQ's own CI covers Linux, and
+`--workers` is tested there; on Windows, one worker per service is the safer
+shape.
+:::
+
 ## Signals
 
 `ardiq run` installs handlers for **SIGINT** (`Ctrl-C`) and **SIGTERM** that call
