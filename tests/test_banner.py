@@ -24,6 +24,15 @@ def test_config_defaults_come_from_core():
     assert app.prefetch == 32
 
 
+def test_startup_banner_names_the_workers_not_the_supervisor(make_app):
+    app = make_app("banner_workers")
+
+    out = render(app, workers=3)
+
+    assert "workers" in out
+    assert app.worker_id not in out  # the supervisor runs no tasks of its own
+
+
 def test_startup_banner_shows_config(make_app):
     app = make_app(
         "banner",

@@ -95,7 +95,7 @@ def _rows(
     rows = [
         ("app", app_path),
         ("version", version("ardiq")),
-        ("worker", app.worker_id),
+        ("workers", str(workers)) if workers > 1 else ("worker", app.worker_id),
         ("redis", _safe_redis_url(app.redis_url)),
         ("queue", app.queue_name),
         ("priorities", ", ".join(app.priorities)),
@@ -104,8 +104,6 @@ def _rows(
         ("mode", "burst" if burst else "continuous"),
         ("tasks", _format_list(app.tasks)),
     ]
-    if workers > 1:
-        rows.insert(3, ("workers", str(workers)))
     if app.crons:
         rows.append(("crons", _format_list(app.crons)))
     return rows
