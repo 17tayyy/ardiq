@@ -163,3 +163,12 @@ async def test_two_worker_processes_drain_the_queue(redis, make_app, tmp_path):
     assert proc.returncode == 0, proc.stderr.decode()
     results = [await job.result() for job in jobs]
     assert [r.value for r in results] == list(range(20))
+
+
+def test_more_than_one_worker_goes_to_the_supervisor(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "_supervise", lambda args: seen.append(args.workers))
+
+    cli._run(_args("--workers", "2"))
+
+    assert seen == [2]

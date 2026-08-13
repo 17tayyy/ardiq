@@ -131,3 +131,30 @@ async def test_cron_occurrence_dedup(redis, make_app):
 
 async def _count_at_least(seq, n: int) -> bool:
     return len(seq) >= n
+
+
+def test_a_cron_schedule_fires_on_its_expression():
+    schedule = _Schedule(cron="*/5 * * * *")
+
+    # 1970-01-01T00:02Z -> the next multiple of five minutes
+    assert schedule.next_after(120_000) == 300_000
+
+
+@pytest.mark.parametrize("every", [0, -1, timedelta(0)])
+def test_an_interval_must_be_positive(every):
+    with pytest.raises(ValueError, match="positive"):
+        _Schedule(every=every)
+
+
+def test_a_month_that_never_comes_is_refused():
+    # 30 February: valid as a field, unreachable as a date.
+    with pytest.raises(ValueError, match="never matches"):
+        _cron_next(_parse_cron("0 0 30 2 *"), 0)
+
+
+def test_the_month_field_excludes_other_months():
+    spec = _parse_cron("0 0 1 3 *")  # midnight, 1 March
+
+    assert _cron_next(spec, 0) == round(
+        datetime(1970, 3, 1, tzinfo=UTC).timestamp() * 1000
+    )

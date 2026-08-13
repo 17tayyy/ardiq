@@ -47,6 +47,15 @@ The first two cases are settled by a single Lua script, so the result is ready b
 `abort()` returns. The third goes out on a Redis pub/sub channel that every running worker
 subscribes to; the one holding the task cancels it and stores the aborted result.
 
+:::caution[Aborting a queued unique task]
+A task that is queued for pickup stays in the stream until a worker reaches it —
+only its consumer can drop it. It therefore still counts as in flight, so a
+[unique](/guides/enqueuing/#unique-tasks) call enqueued in that gap joins the job
+you just aborted instead of starting a new one, and comes back aborted with it.
+Enqueue the replacement after the abort has settled — `await job.result()`
+returns as soon as it has.
+:::
+
 :::caution[Burst workers can't cancel mid-flight]
 The abort channel is only watched by a long-running worker. A worker started with
 `--burst` drains the queue and exits, so it doesn't subscribe. Aborts are still honored

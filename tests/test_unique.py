@@ -204,3 +204,48 @@ async def test_a_plain_task_still_gets_a_fresh_id_every_time(redis, make_app):
     assert first.id != second.id
     await asyncio.wait_for(app.run(), timeout=30)
     assert ran == [1, 1]
+
+
+async def _scheduled(job) -> bool:
+    return await job.status() == "scheduled"
+
+
+async def test_a_retrying_unique_task_keeps_its_slot(redis, make_app, poll):
+    app = make_app("uniqretry", concurrency=1, poll_block_ms=50)
+    attempts: list[int] = []
+
+    @app.task(unique=True, max_retries=3, backoff_ms=30_000)
+    async def flaky(x: int):
+        attempts.append(x)
+        raise RuntimeError("not yet")
+
+    worker = asyncio.ensure_future(app.run())
+    job = await flaky.enqueue(1)
+    assert await poll(lambda: _scheduled(job)), "the retry was never staged"
+
+    # It is waiting out its backoff, which still counts as in flight.
+    again = await flaky.enqueue(1)
+    assert again.id == job.id
+    assert await redis.zcard("ardiq:uniqretry:queues:delayed:default") == 1
+    assert attempts == [1]
+
+    app.stop()
+    await asyncio.wait_for(worker, timeout=15)
+
+
+async def test_aborting_a_unique_task_frees_the_call(redis, make_app):
+    app = make_app("uniqabort", poll_block_ms=50)
+
+    @app.task(unique=True)
+    async def sync_shop(shop: str):
+        return shop
+
+    first = await sync_shop.options(delay_ms=60_000).enqueue("ada")
+    assert await first.abort() is True
+    assert (await first.result()).aborted
+
+    second = await sync_shop.options(delay_ms=60_000).enqueue("ada")
+
+    assert second.id == first.id
+    assert await second.status() == "scheduled"  # not the aborted result
+    assert await second.result() is None

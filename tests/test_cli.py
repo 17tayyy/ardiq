@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import signal
 
 import pytest
 
@@ -101,3 +102,25 @@ async def test_serve_logs_lifecycle_with_burst_reason(redis, make_app, caplog):
         for m in messages
     )
     assert f"worker stopped worker_id={app.worker_id} reason=burst" in messages
+
+
+def test_main_runs_the_command(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "_run", lambda args: seen.append(args.app))
+
+    main(["run", "myapp:app"])
+
+    assert seen == ["myapp:app"]
+
+
+async def test_a_signal_stops_the_worker(redis, make_app, caplog):
+    app = make_app("cli_signal", concurrency=1, poll_block_ms=50)
+
+    with caplog.at_level(logging.INFO, logger="ardiq"):
+        worker = asyncio.ensure_future(serve(app, burst=False, quiet=True))
+        await asyncio.sleep(0.3)  # let it install its handlers and start the loop
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(worker, timeout=15)
+
+    messages = [r.message for r in caplog.records if r.name == "ardiq"]
+    assert f"worker stopped worker_id={app.worker_id} reason=signal" in messages

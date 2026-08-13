@@ -1,5 +1,7 @@
 """Registering two tasks under one name must fail loudly, not overwrite."""
 
+import functools
+
 import pytest
 
 
@@ -95,3 +97,13 @@ async def test_separate_apps_keep_separate_registries(make_app):
         pass
 
     assert app.tasks == other.tasks == ["shared"]
+
+
+async def test_a_callable_without_a_name_needs_one(make_app):
+    app = make_app("reg_noname")
+    partial = functools.partial(print, "hi")  # no __name__ to fall back on
+
+    with pytest.raises(TypeError, match="explicit name"):
+        app.task()(partial)
+
+    assert app.task(name="say_hi")(partial).name == "say_hi"
