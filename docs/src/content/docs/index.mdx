@@ -32,24 +32,21 @@ import logoDark from '../../assets/ardiq-logo-dark.png';
 ArdiQ runs the worker loop and every Redis round-trip in **Rust** (via [PyO3](https://pyo3.rs) +
 [tokio](https://tokio.rs)), off the GIL; you write tasks in plain **Python**. The two meet at a
 single async callback, with the GIL held only for the microseconds it takes to start a task and
-read its result — so one process takes a lot of work without asking for much in return.
+read its result, so one process takes a lot of work without asking for much in return.
 
-Measured against five other Redis-backed queues on the same machine, same sitting:
+Measured against five other Redis-backed queues on one machine, in one sitting, ArdiQ came
+out fastest of the six on CPU-bound work and on raw dispatch, and it stages a bulk enqueue
+faster than anything else in the group by a wide margin. On I/O-bound work it lands second
+by a hair, in a scenario that has almost nothing left to win. It also spends the least
+memory of any queue in its performance tier: one of the six is lighter, and that one is
+last or second-to-last on every workload.
 
-| Tasks/s | ArdiQ | Taskiq | Streaq | arq | Dramatiq | Celery |
-|---------|------:|-------:|-------:|----:|---------:|-------:|
-| **CPU-bound** | **394** | 356 | 322 | 283 | 12.5 | 12.5 |
-| **Dispatch** | **2,895** | 2,051 | 1,179 | 789 | 1,787 | 861 |
-| **I/O-bound** | 95.3 | **96.9** | 91.8 | 87.6 | 94.1 | 71.2 |
-| **Enqueuing** | **81,636** | 2,503 | 27,433 | 999 | 2,711 | 1,886 |
-| **Memory** | 33 MB | 91 MB | 48 MB | **30 MB** | 56 MB | 50 MB |
-
-The [performance guide](/guides/performance/) has the caveats, including the two rows where
-the numbers flatter us and shouldn't.
+The [performance guide](/guides/performance/) has the tables, the error bars, and the rows
+where the numbers flatter us and shouldn't.
 
 <CardGrid stagger>
 	<Card title="Rust core, off the GIL" icon="rocket">
-		The loop and every Redis round-trip run on tokio, in Rust — heavy
+		The loop and every Redis round-trip run on tokio, in Rust: heavy
 		concurrency without the memory bill.
 	</Card>
 	<Card title="Batteries included" icon="setting">
