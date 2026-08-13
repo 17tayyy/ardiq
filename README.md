@@ -15,6 +15,7 @@
 <p align="center">
   <b><a href="https://ardiq.bytay.dev">Documentation</a></b> &nbsp;•&nbsp;
   <a href="https://ardiq.bytay.dev/guides/getting-started/">Getting started</a> &nbsp;•&nbsp;
+  <a href="https://ardiq.bytay.dev/guides/architecture/">How it works</a> &nbsp;•&nbsp;
   <a href="https://ardiq.bytay.dev/reference/api/">API reference</a> &nbsp;•&nbsp;
   <a href="https://ardiq.bytay.dev/guides/performance/">Benchmarks</a>
 </p>
@@ -44,6 +45,11 @@ Measured against five other Redis-backed queues on the same machine, same sittin
 Only arq is lighter, and it is last or second-to-last on every workload. The short version:
 everything faster than ArdiQ here is heavier, and everything lighter is slower.
 
+The first three rows are worker throughput: tasks fully executed per second, timed separately
+from the producer. **Enqueuing** is the other side of the wire, how fast a producer stages
+work before any worker touches it, and only ArdiQ and Streaq stage in batches. Read that row
+as 81,636 against Streaq's 27,433; the other four await one round trip per task.
+
 ## Features
 
 - 🦀 **Rust core**: the loop and Redis I/O run on tokio, off the GIL
@@ -56,7 +62,7 @@ everything faster than ArdiQ here is heavier, and everything lighter is slower.
 - **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
 - **Unique task names**, enforced at registration, so a duplicate raises instead of silently shadowing
 - **Deduplication** (`@app.task(unique=True)`): an identical call already in flight is reused, not queued twice
-- **Crash recovery**: in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
+- **At-least-once delivery**: a task is acknowledged only after it terminates, so in-flight work on a dead worker is reclaimed (`XAUTOCLAIM`) and rerun, never dropped
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
 - **Abort/cancel** (`job.abort()`): drops queued tasks and cancels running ones over pub/sub
 - **Sync & async tasks**: blocking sync functions run in a thread pool
@@ -99,6 +105,10 @@ Read the caveats, because they matter and they are ours to state:
   `ardiq run app:app --workers 4`.
 - **Absolute numbers do not travel between machines.** Compare rows within a
   table, never against someone else's hardware.
+- **The enqueue row is not apples-to-apples for four of the six.** ArdiQ and
+  Streaq stage through a bulk API; the other four await one round trip per task,
+  which is their only option in this suite. The clean comparison is ArdiQ against
+  Streaq, both batching.
 
 The suite is public and reproducible, including the parts where we lose:
 [benchmark repo](https://github.com/17tayyy/python-task-queue-benchmarks) ·
