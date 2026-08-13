@@ -22,6 +22,11 @@ What makes ArdiQ different is the split:
 The result is top-tier throughput at a fraction of the memory of comparable Python queues,
 because the hot path — the loop and the network — stays off the interpreter.
 
+Tasks are delivered **at least once**: an entry is acknowledged only after the task body has
+terminated, so losing a worker costs you a repeat, never a task. [How ArdiQ
+works](/guides/architecture/) traces the whole path from `enqueue()` to `XACK` and spells out
+what that guarantee asks of your task bodies.
+
 ## Feature overview
 
 - 🦀 **Rust core** — the loop and Redis I/O run on tokio, off the GIL.
@@ -64,4 +69,5 @@ Rust core (memory and per-task overhead) and a batteries-included API.
 ## Next steps
 
 Head to [Getting started](/guides/getting-started/) to install ArdiQ and run your first
-worker.
+worker, or to [How ArdiQ works](/guides/architecture/) for the mechanism underneath: Redis
+Streams, consumer groups, atomic Lua, and where Rust ends and Python begins.

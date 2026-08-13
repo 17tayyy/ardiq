@@ -79,6 +79,7 @@ export default defineConfig({
           items: [
             { label: "Introduction", slug: "guides/introduction" },
             { label: "Getting started", slug: "guides/getting-started" },
+            { label: "How it works", slug: "guides/architecture" },
             { label: "Performance", slug: "guides/performance" },
           ],
         },

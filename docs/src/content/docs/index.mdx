@@ -71,9 +71,9 @@ rows where the numbers flatter us and shouldn't.
 		`async def` tasks run on the loop; blocking `def` tasks run in a thread
 		pool so they never freeze the worker.
 	</Card>
-	<Card title="Crash recovery" icon="approve-check">
-		In-flight tasks of a dead worker are reclaimed via Redis consumer groups
-		(`XAUTOCLAIM`) and a heartbeat.
+	<Card title="At-least-once delivery" icon="approve-check">
+		A task is acknowledged only after it terminates, so in-flight work on a
+		dead worker is reclaimed and rerun, never dropped.
 	</Card>
 </CardGrid>
 
@@ -96,6 +96,7 @@ $ ardiq run example:app
 
 <CardGrid>
 	<LinkCard title="Getting started" href="/guides/getting-started/" description="Install ArdiQ, start Redis, run your first worker." />
+	<LinkCard title="How it works" href="/guides/architecture/" description="From enqueue to XACK: Redis Streams, atomic Lua, and the Rust/Python boundary." />
 	<LinkCard title="Performance" href="/guides/performance/" description="Benchmarks vs five other Python task queues." />
 	<LinkCard title="Defining tasks" href="/guides/tasks/" description="The @app.task decorator, retries, timeouts and priorities." />
 	<LinkCard title="Configuration reference" href="/reference/configuration/" description="Every Ardiq(...) option explained." />
