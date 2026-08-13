@@ -10,7 +10,9 @@ import importlib
 import logging
 import os
 import signal
+import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from ardiq._core import init_logging
@@ -93,7 +95,86 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the startup banner (plain log line instead)",
     )
+    run.add_argument(
+        "-w",
+        "--workers",
+        type=_positive,
+        default=1,
+        metavar="N",
+        help="Run N worker processes instead of one (default: 1)",
+    )
     return parser
+
+
+def _positive(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return number
+
+
+POLL_CHILDREN_S = 0.2
+
+
+def _supervise(args: argparse.Namespace) -> None:
+    """Run the workers as child processes and stay until they are done.
+
+    Each child is a plain `ardiq run` of its own, so it keeps the CLI's exit
+    path — the one thing standing between a finished worker and a segfault on
+    the way out.
+    """
+    child_argv = [sys.executable, "-m", "ardiq", "run", args.app, "--quiet"]
+    if args.burst:
+        child_argv.append("--burst")
+    if args.verbose:
+        child_argv.append("--verbose")
+
+    if not args.quiet:
+        from ardiq.banner import print_startup_banner
+
+        print_startup_banner(
+            import_string(args.app),
+            app_path=args.app,
+            burst=args.burst,
+            workers=args.workers,
+        )
+
+    children = [subprocess.Popen(child_argv) for _ in range(args.workers)]
+    logger.info(
+        f"supervisor starting workers={args.workers} "
+        f"pids={','.join(str(c.pid) for c in children)}"
+    )
+
+    stopping = False
+
+    def stop_children() -> None:
+        nonlocal stopping
+        stopping = True
+        for child in children:
+            with contextlib.suppress(OSError):
+                child.terminate()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(ValueError, OSError):
+            signal.signal(sig, lambda *_: stop_children())
+
+    failed = 0
+    running = list(children)
+    while running:
+        time.sleep(POLL_CHILDREN_S)
+        for child in list(running):
+            code = child.poll()
+            if code is None:
+                continue
+            running.remove(child)
+            if code and not stopping:
+                failed = code
+                logger.error(f"worker died pid={child.pid} code={code}")
+                stop_children()
+
+    logger.info(f"supervisor stopped workers={args.workers} code={failed}")
+    if failed:
+        raise SystemExit(failed)
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -103,6 +184,9 @@ def _run(args: argparse.Namespace) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     init_logging(args.verbose)  # surface the Rust core's logs too
+    if args.workers > 1:
+        _supervise(args)
+        return
     worker = import_string(args.app)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve(worker, args.burst, app_path=args.app, quiet=args.quiet))

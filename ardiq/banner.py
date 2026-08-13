@@ -89,7 +89,9 @@ def _box_chars(file: TextIO) -> tuple[str, ...]:
     return _BOX_UNICODE
 
 
-def _rows(app: Ardiq, *, app_path: str, burst: bool) -> list[tuple[str, str]]:
+def _rows(
+    app: Ardiq, *, app_path: str, burst: bool, workers: int
+) -> list[tuple[str, str]]:
     rows = [
         ("app", app_path),
         ("version", version("ardiq")),
@@ -102,6 +104,8 @@ def _rows(app: Ardiq, *, app_path: str, burst: bool) -> list[tuple[str, str]]:
         ("mode", "burst" if burst else "continuous"),
         ("tasks", _format_list(app.tasks)),
     ]
+    if workers > 1:
+        rows.insert(3, ("workers", str(workers)))
     if app.crons:
         rows.append(("crons", _format_list(app.crons)))
     return rows
@@ -112,6 +116,7 @@ def print_startup_banner(
     *,
     app_path: str,
     burst: bool,
+    workers: int = 1,
     file: TextIO | None = None,
 ) -> None:
     """Print the startup panel to stderr (Celery-style)."""
@@ -123,7 +128,7 @@ def print_startup_banner(
         return f"{style}{text}{_RESET}" if colour else text
 
     logo_lines = LOGO.strip("\n").split("\n")
-    rows = _rows(app, app_path=app_path, burst=burst)
+    rows = _rows(app, app_path=app_path, burst=burst, workers=workers)
     key_width = max(len(k) for k, _ in rows)
 
     # Lay the body out in plain text first, then paint: widths are measured on

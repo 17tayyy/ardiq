@@ -137,9 +137,23 @@ processes** against the same queue. Multiple workers form a Redis consumer group
 are distributed across them and a crashed worker's in-flight tasks are reclaimed
 automatically.
 
+`--workers N` starts N of them for you and supervises the lot:
+
 ```console
-# three workers sharing one queue
-$ ardiq run example:app &
+# four workers sharing one queue
+$ ardiq run example:app --workers 4
+```
+
+One banner is printed, each child logs under its own `worker_id`, and `Ctrl-C`
+or a `SIGTERM` to the supervisor reaches every worker. If one of them exits
+non-zero the supervisor stops the rest and exits with that code, so a crashed
+worker fails the deployment instead of leaving it quietly running short-handed.
+
+Nothing is shared between the processes — they are independent consumers of the
+same streams — so starting them yourself, one per container, works exactly as
+well and is what an orchestrator will do anyway:
+
+```console
 $ ardiq run example:app &
 $ ardiq run example:app &
 ```

@@ -61,6 +61,7 @@ everything faster than ArdiQ here is heavier, and everything lighter is slower.
 - **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
 - **Sync & async tasks** — blocking sync functions run in a thread pool
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
+- **Multiprocess** (`--workers N`) — N supervised worker processes, for CPU-bound work the GIL would cap
 
 ## Performance
 
@@ -94,7 +95,8 @@ Read the caveats, because they matter and they are ours to state:
   16-thread box: prefork workers thrash the GIL harder the more cores you give
   them. On a laptop they land near 55. Do not read that row as a 30× win.
 - **The GIL caps in-process CPU work for every Python queue, ArdiQ included.**
-  Your task body is serial per worker. Scale out with processes.
+  Your task body is serial per worker. Scale out with processes —
+  `ardiq run app:app --workers 4`.
 - **Absolute numbers do not travel between machines.** Compare rows within a
   table, never against someone else's hardware.
 
