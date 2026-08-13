@@ -20,7 +20,7 @@ use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
 const DEFAULT_ABORT_MARKER_MS: i64 = 300_000;
 
-type EnqueueItem = (String, Vec<u8>, Option<String>, i64, i64, i64);
+type EnqueueItem = (String, Vec<u8>, Option<String>, i64, i64, i64, bool);
 
 create_exception!(
     ardiq,
@@ -189,7 +189,8 @@ impl ArdiqCore {
         })
     }
 
-    #[pyo3(signature = (task_id, payload, priority=None, delay_ms=0, schedule_ms=0, expire_ms=0))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (task_id, payload, priority=None, delay_ms=0, schedule_ms=0, expire_ms=0, reset_result=false))]
     fn enqueue<'py>(
         &self,
         py: Python<'py>,
@@ -199,6 +200,7 @@ impl ArdiqCore {
         delay_ms: i64,
         schedule_ms: i64,
         expire_ms: i64,
+        reset_result: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let queue = self.queue.clone();
         let priority = priority.unwrap_or_else(|| queue.default_priority().to_string());
@@ -217,7 +219,14 @@ impl ArdiqCore {
             };
             let queued = queue
                 .enqueue(
-                    &mut conn, &task_id, &payload, &priority, score, expire_ms, now,
+                    &mut conn,
+                    &task_id,
+                    &payload,
+                    &priority,
+                    score,
+                    expire_ms,
+                    now,
+                    reset_result,
                 )
                 .await
                 .map_err(to_py_err)?;
@@ -240,18 +249,30 @@ impl ArdiqCore {
             let staged: Vec<StagedTask> = items
                 .into_iter()
                 .map(
-                    |(task_id, payload, priority, delay_ms, schedule_ms, expire_ms)| StagedTask {
+                    |(
                         task_id,
                         payload,
-                        priority: priority.unwrap_or_else(|| queue.default_priority().to_string()),
-                        score_ms: if schedule_ms > 0 {
-                            schedule_ms
-                        } else if delay_ms > 0 {
-                            now + delay_ms
-                        } else {
-                            0
-                        },
+                        priority,
+                        delay_ms,
+                        schedule_ms,
                         expire_ms,
+                        reset_result,
+                    )| {
+                        StagedTask {
+                            task_id,
+                            payload,
+                            priority: priority
+                                .unwrap_or_else(|| queue.default_priority().to_string()),
+                            score_ms: if schedule_ms > 0 {
+                                schedule_ms
+                            } else if delay_ms > 0 {
+                                now + delay_ms
+                            } else {
+                                0
+                            },
+                            expire_ms,
+                            reset_result,
+                        }
                     },
                 )
                 .collect();

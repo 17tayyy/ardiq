@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import logging
 import time
@@ -77,6 +78,11 @@ class Ardiq:
         self._error_hooks: list[ErrorHook] = []
         self.state = State()
         self._cron_poll_s = cron_poll_s
+        if redis_url is not None and not redis_url.strip():
+            raise ValueError(
+                "redis_url is empty — pass a URL like 'redis://localhost:6379', "
+                "or omit it to use the default"
+            )
         config = {
             "redis_url": redis_url,
             "queue_name": queue_name,
@@ -192,6 +198,7 @@ class Ardiq:
         backoff_ms: int = ...,
         timeout: float | None = ...,
         priority: str | None = ...,
+        unique: bool = ...,
     ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
     def task[**P, R](
@@ -203,6 +210,7 @@ class Ardiq:
         backoff_ms: int = 0,
         timeout: float | None = None,
         priority: str | None = None,
+        unique: bool = False,
     ) -> Any:
         """Register a function as a task. Returns a `Task` you can `.enqueue`."""
         self._check_priority(priority)
@@ -211,7 +219,7 @@ class Ardiq:
             task_name = self._register(
                 name, fn, "task", max_retries, backoff_ms, timeout
             )
-            return Task(self, task_name, fn, priority)
+            return Task(self, task_name, fn, priority, unique)
 
         return wrap(fn) if fn is not None else wrap
 
@@ -317,11 +325,13 @@ class Ardiq:
             except Exception:
                 logger.exception("ardiq on_error hook failed for %r", ctx.name)
 
-    def ref(self, name: str, *, priority: str | None = None) -> Task[..., Any]:
+    def ref(
+        self, name: str, *, priority: str | None = None, unique: bool = False
+    ) -> Task[..., Any]:
         """A handle to a task registered somewhere else — same `.enqueue` and
         `.options` as a local task, but no function to call. Use it to reach a
         worker's tasks without importing (or registering) them here."""
-        return Task(self, name, None, priority)
+        return Task(self, name, None, priority, unique)
 
     async def send(self, name: str, *args: Any, **kwargs: Any) -> Job:
         """Enqueue a task by name, with no local registration. Shorthand for
@@ -344,7 +354,9 @@ class Ardiq:
 
         items, jobs = [], []
         for task in prepared:
-            job_id = task.task_id or uuid.uuid4().hex
+            job_id = task.task_id or self._task_id(
+                task.name, task.args, task.kwargs, task.unique
+            )
             items.append(
                 (
                     job_id,
@@ -353,6 +365,7 @@ class Ardiq:
                     task.delay_ms,
                     task.schedule_ms,
                     task.expire_ms,
+                    task.unique,
                 )
             )
             jobs.append(Job(self, job_id))
@@ -372,9 +385,10 @@ class Ardiq:
         delay_ms: int = 0,
         schedule_ms: int = 0,
         expire_ms: int = 0,
+        unique: bool = False,
     ) -> Job:
         self._check_priority(priority)
-        job_id = task_id or uuid.uuid4().hex
+        job_id = task_id or self._task_id(name, args, kwargs, unique)
         payload = self._pack(name, args, kwargs)
         await self._core.enqueue(
             job_id,
@@ -383,8 +397,19 @@ class Ardiq:
             delay_ms,
             schedule_ms,
             expire_ms,
+            unique,
         )
         return Job(self, job_id)
+
+    def _task_id(self, name: str, args: tuple, kwargs: dict, unique: bool) -> str:
+        """A unique task's id is the call itself, so an identical one already in
+        flight collides with it in Redis and no second task is created."""
+        if not unique:
+            return uuid.uuid4().hex
+        call = self._dumps(
+            {"f": name, "a": list(args), "k": dict(sorted(kwargs.items()))}
+        )
+        return f"unique:{name}:{hashlib.blake2b(call, digest_size=16).hexdigest()}"
 
     async def _enqueue_cron(
         self, name: str, fire_ms: int, priority: str | None

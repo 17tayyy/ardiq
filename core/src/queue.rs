@@ -14,6 +14,7 @@ pub struct StagedTask {
     pub priority: String,
     pub score_ms: i64,
     pub expire_ms: i64,
+    pub reset_result: bool,
 }
 
 pub fn now_ms() -> i64 {
@@ -150,6 +151,7 @@ impl Queue {
         score_ms: i64,
         expire_ms: i64,
         now_ms: i64,
+        reset_result: bool,
     ) -> RedisResult<bool> {
         let queued: i64 = self
             .publish_task
@@ -161,6 +163,9 @@ impl Queue {
             .arg(score_ms)
             .arg(expire_ms)
             .arg(now_ms)
+            .arg(self.result_key(task_id))
+            .arg(self.results_set())
+            .arg(i64::from(reset_result))
             .invoke_async(conn)
             .await?;
         Ok(queued == 1)
@@ -175,7 +180,7 @@ impl Queue {
         let mut staged = Vec::with_capacity(items.len());
         for chunk in items.chunks(BATCH_CHUNK) {
             let mut invocation = self.publish_tasks.prepare_invoke();
-            invocation.arg(now_ms);
+            invocation.arg(now_ms).arg(self.results_set());
             for task in chunk {
                 invocation
                     .arg(self.task_key(&task.task_id))
@@ -184,7 +189,9 @@ impl Queue {
                     .arg(&task.task_id)
                     .arg(&task.payload)
                     .arg(task.score_ms)
-                    .arg(task.expire_ms);
+                    .arg(task.expire_ms)
+                    .arg(self.result_key(&task.task_id))
+                    .arg(i64::from(task.reset_result));
             }
             let results: Vec<i64> = invocation.invoke_async(conn).await?;
             staged.extend(results.into_iter().map(|queued| queued == 1));

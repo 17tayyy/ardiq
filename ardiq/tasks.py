@@ -55,11 +55,13 @@ class Task[**P, R]:
         name: str,
         fn: Callable[P, R] | None,
         priority: str | None,
+        unique: bool = False,
     ):
         self.app = app
         self.name = name
         self.fn = fn
         self.priority = priority
+        self.unique = unique
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         if self.fn is None:
@@ -68,11 +70,15 @@ class Task[**P, R]:
 
     async def enqueue(self, *args: P.args, **kwargs: P.kwargs) -> Job:
         """Dispatch the task with these args; returns a `Job` handle."""
-        return await self.app._enqueue(self.name, args, kwargs, priority=self.priority)
+        return await self.app._enqueue(
+            self.name, args, kwargs, priority=self.priority, unique=self.unique
+        )
 
     def prepare(self, *args: P.args, **kwargs: P.kwargs) -> PreparedTask:
         """The call `.enqueue` would make, without making it — for `enqueue_many`."""
-        return PreparedTask(self.name, args, kwargs, None, self.priority, 0, 0, 0)
+        return PreparedTask(
+            self.name, args, kwargs, None, self.priority, 0, 0, 0, self.unique
+        )
 
     def options(
         self,
@@ -82,9 +88,13 @@ class Task[**P, R]:
         delay_ms: int = 0,
         schedule_ms: int = 0,
         expire_ms: int = 0,
+        unique: bool | None = None,
     ) -> _BoundTask[P, R]:
-        """Bind one-off enqueue options (delay, schedule, priority, id) for `.enqueue`."""
-        return _BoundTask(self, task_id, priority, delay_ms, schedule_ms, expire_ms)
+        """Bind one-off enqueue options (delay, schedule, priority, id, unique)
+        for `.enqueue`."""
+        return _BoundTask(
+            self, task_id, priority, delay_ms, schedule_ms, expire_ms, unique
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +107,11 @@ class _BoundTask[**P, R]:
     delay_ms: int
     schedule_ms: int
     expire_ms: int
+    unique: bool | None = None
+
+    @property
+    def _unique(self) -> bool:
+        return self.task.unique if self.unique is None else self.unique
 
     async def enqueue(self, *args: P.args, **kwargs: P.kwargs) -> Job:
         return await self.task.app._enqueue(
@@ -108,6 +123,7 @@ class _BoundTask[**P, R]:
             delay_ms=self.delay_ms,
             schedule_ms=self.schedule_ms,
             expire_ms=self.expire_ms,
+            unique=self._unique,
         )
 
     def prepare(self, *args: P.args, **kwargs: P.kwargs) -> PreparedTask:
@@ -121,6 +137,7 @@ class _BoundTask[**P, R]:
             self.delay_ms,
             self.schedule_ms,
             self.expire_ms,
+            self._unique,
         )
 
 
@@ -140,3 +157,4 @@ class PreparedTask:
     delay_ms: int
     schedule_ms: int
     expire_ms: int
+    unique: bool = False

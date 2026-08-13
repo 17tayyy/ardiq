@@ -97,6 +97,63 @@ Priorities are validated across the whole batch *before* anything is sent, so a
 lane nobody reads raises and enqueues nothing, rather than leaving half the
 batch in Redis.
 
+## Unique tasks
+
+Some work must not queue up twice. Two "rebuild this shop's index" jobs for the
+same shop do the same thing: the second is wasted at best, and a race at worst.
+Declare the task `unique=True` and an identical call that is already waiting or
+running is not enqueued a second time:
+
+```python
+@app.task(unique=True)
+async def rebuild_index(shop_id: int): ...
+
+
+first = await rebuild_index.enqueue(42)
+second = await rebuild_index.enqueue(42)   # nothing new is enqueued
+
+assert second.id == first.id               # the job already in flight
+```
+
+You still get a `Job` back — the one already doing the work — so the caller
+never has to treat "someone got there first" as an error.
+
+Identity is the call itself: the task's name plus its arguments. So
+`rebuild_index(42)` and `rebuild_index(43)` are two different jobs, and keyword
+order is irrelevant (`notify(to="ada", subject="hi")` is the same call as
+`notify(subject="hi", to="ada")`). The id you get back shows it:
+`unique:rebuild_index:9f2c…`, which is also what you'll see in Redis.
+
+The window is exactly as long as the task exists — from enqueue until it
+finishes, retries included. Once it has finished, the same call can be enqueued
+again, and that new run **replaces the previous result** under the same id: an
+older `Job` handle you kept around will read the new run's outcome, not the one
+it saw before.
+
+Because the id is derived from the payload, every process computes the same one.
+Duplicates collapse inside a batch, and a producer with no registry can dedup
+too:
+
+```python
+# one job, not three
+await queue.enqueue_many([rebuild_index.prepare(42)] * 3)
+
+# from a web service that never imports the task
+await queue.ref("rebuild_index", unique=True).enqueue(42)
+```
+
+`unique` is a per-call option like any other, so `.options(unique=True)` turns it
+on for one dispatch and `.options(unique=False)` turns it off for a task that
+declared it. Passing your own `task_id` wins over both — an explicit id is
+already a deduplication key.
+
+:::note[Not a lock on the function]
+Uniqueness is per *call*, not per task: a hundred `rebuild_index` jobs for a
+hundred different shops all run, as they should. There is nothing here that
+limits how many instances of one task run at once — that's what
+[`concurrency`](/reference/configuration/) is for.
+:::
+
 ## Per-call options
 
 For one-off overrides, chain `.options(...)` before `.enqueue(...)`:
@@ -114,6 +171,7 @@ await add.options(priority="high", delay_ms=5000).enqueue(2, 3)
 | `delay_ms`    | `int`         | `0`     | Wait this many ms from **now** before the task becomes runnable. |
 | `schedule_ms` | `int`         | `0`     | Run at this absolute epoch-ms timestamp. |
 | `expire_ms`   | `int`         | `0`     | Drop the job if it hasn't started within this window. |
+| `unique`      | `bool \| None`| task's default | Dedup this call against an identical one in flight; see [Unique tasks](#unique-tasks). |
 
 ### Delayed tasks
 

@@ -55,6 +55,7 @@ everything faster than ArdiQ here is heavier, and everything lighter is slower.
 - **Error hooks** (`@app.on_error`) — send every failed attempt to Sentry or your own reporter
 - **Typed failures** (`BrokerError`) — catch "Redis is down" without a blanket `except`
 - **Unique task names**, enforced at registration — a duplicate raises instead of silently shadowing
+- **Deduplication** (`@app.task(unique=True)`) — an identical call already in flight is reused, not queued twice
 - **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
 - **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
@@ -238,6 +239,33 @@ await queue.ref("build_report", priority="high").enqueue(7)
 
 Since the fallback is the middle lane, forgetting it is survivable rather than
 disastrous, but the work still won't be where you declared it belongs.
+
+## Unique tasks
+
+Two "rebuild this shop's index" jobs for the same shop do the same work twice.
+Declare the task `unique=True` and an identical call that is already waiting or
+running is not enqueued again:
+
+```python
+@app.task(unique=True)
+async def rebuild_index(shop_id: int): ...
+
+
+first = await rebuild_index.enqueue(42)
+second = await rebuild_index.enqueue(42)   # nothing new is enqueued
+assert second.id == first.id               # the job already in flight
+```
+
+You still get a `Job` back — the one already doing the work — so "someone got
+there first" is never an error to handle. Identity is the call itself, name plus
+arguments, so other shops are unaffected and keyword order doesn't matter. The
+window lasts exactly as long as the task does, retries included; once it
+finishes, the same call can be enqueued again and starts a fresh run.
+
+The id is derived from the payload, so every process computes the same one:
+duplicates collapse inside an `enqueue_many` batch, and a producer with no
+registry can dedup with `queue.ref("rebuild_index", unique=True)`. Per call,
+`.options(unique=True)` turns it on and `.options(unique=False)` turns it off.
 
 ## Retries and error hooks
 

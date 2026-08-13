@@ -52,11 +52,16 @@ def task(
     backoff_ms: int = 0,
     timeout: float | None = None,
     priority: str | None = None,
+    unique: bool = False,
 ) -> Task
 ```
 
 Usable bare (`@app.task`) or called (`@app.task(max_retries=5)`). See
 [Defining tasks](/guides/tasks/).
+
+With `unique=True`, enqueuing a call identical to one already waiting or running
+returns that job instead of creating a second one — see
+[Unique tasks](/guides/enqueuing/#unique-tasks).
 
 ### `cron(...)`
 
@@ -86,7 +91,7 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 | `await run()` | `None` | Start the worker loop; runs until `stop()` or (in burst) the queue drains. |
 | `stop()` | `None` | Ask the loop to shut down gracefully. |
 | `await send(name, *args, **kwargs)` | `Job` | Enqueue by name, with no local registration; see [Enqueuing by name](/guides/enqueuing/#enqueuing-by-name). |
-| `ref(name, *, priority=None)` | `Task` | A handle to a task registered elsewhere — enqueueable, not callable. |
+| `ref(name, *, priority=None, unique=False)` | `Task` | A handle to a task registered elsewhere — enqueueable, not callable. |
 | `await queue_size()` | `int` | Number of jobs waiting across lanes. |
 | `await result(task_id, timeout=None)` | `TaskResult \| None` | Fetch a result; with `timeout` (s) waits, else returns now-or-`None`. |
 | `await status(task_id)` | `str` | `queued` / `scheduled` / `running` / `complete` / `not_found`. |
@@ -110,6 +115,7 @@ inline calls are type-checked against it — see
 | `name` | The registered name. |
 | `fn` | The underlying function, or `None` for a `ref`. |
 | `priority` | The task's default priority lane (or `None`). |
+| `unique` | Whether an identical call already in flight is reused instead of enqueued again. |
 | `task(*args, **kwargs)` | Calling the `Task` runs `fn` **inline**, bypassing the queue. A `ref` raises `TypeError`. |
 | `await enqueue(*args, **kwargs)` | Dispatch to a worker; returns a [`Job`](#job). |
 | `options(...)` | Returns a bound task with per-call overrides; see below. |
@@ -124,6 +130,7 @@ def options(
     delay_ms: int = 0,
     schedule_ms: int = 0,
     expire_ms: int = 0,
+    unique: bool | None = None,
 ) -> _BoundTask
 ```
 

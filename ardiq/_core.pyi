@@ -42,11 +42,12 @@ class ArdiqCore:
         delay_ms: int = 0,
         schedule_ms: int = 0,
         expire_ms: int = 0,
+        reset_result: bool = False,
     ) -> Awaitable[bool]: ...
     def enqueue_many(
         self,
-        # (task_id, payload, priority, delay_ms, schedule_ms, expire_ms)
-        items: list[tuple[str, bytes, str | None, int, int, int]],
+        # (task_id, payload, priority, delay_ms, schedule_ms, expire_ms, reset_result)
+        items: list[tuple[str, bytes, str | None, int, int, int, bool]],
     ) -> Awaitable[list[bool]]: ...
     def run(self, callback: Executor) -> Awaitable[None]: ...
     def stop(self) -> None: ...
