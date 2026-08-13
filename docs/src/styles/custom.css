@@ -54,3 +54,36 @@
 .hero-badges img {
   height: 20px;
 }
+
+.perf-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 1rem;
+  margin-block: 2rem;
+  padding: 0;
+  list-style: none;
+}
+
+.perf-stats li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1.25rem 1rem;
+  text-align: center;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  background: var(--sl-color-black);
+}
+
+.perf-figure {
+  font-size: clamp(2rem, 1.2rem + 2.4vw, 3rem);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--sl-color-accent-high);
+}
+
+.perf-label {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-2);
+  text-wrap: balance;
+}
