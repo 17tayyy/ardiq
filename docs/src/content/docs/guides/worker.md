@@ -149,8 +149,8 @@ or a `SIGTERM` to the supervisor reaches every worker. If one of them exits
 non-zero the supervisor stops the rest and exits with that code, so a crashed
 worker fails the deployment instead of leaving it quietly running short-handed.
 
-Nothing is shared between the processes — they are independent consumers of the
-same streams — so starting them yourself, one per container, works exactly as
+Nothing is shared between the processes. They are independent consumers of the
+same streams, so starting them yourself, one per container, works exactly as
 well and is what an orchestrator will do anyway:
 
 ```console

@@ -46,22 +46,22 @@ everything faster than ArdiQ here is heavier, and everything lighter is slower.
 
 ## Features
 
-- 🦀 **Rust core** — the loop and Redis I/O run on tokio, off the GIL
-- **Priority queues** — higher-priority tasks are consumed first
+- 🦀 **Rust core**: the loop and Redis I/O run on tokio, off the GIL
+- **Priority queues**: higher-priority tasks are consumed first
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
-- **Cron & recurring** tasks (`@app.cron`) — 5-field cron (UTC) or `every=` intervals
+- **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
-- **Enqueue by name** (`app.send("task", ...)`) — producers never import the task module
-- **Error hooks** (`@app.on_error`) — send every failed attempt to Sentry or your own reporter
-- **Typed failures** (`BrokerError`) — catch "Redis is down" without a blanket `except`
-- **Unique task names**, enforced at registration — a duplicate raises instead of silently shadowing
-- **Deduplication** (`@app.task(unique=True)`) — an identical call already in flight is reused, not queued twice
-- **Crash recovery** — in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
+- **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
+- **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
+- **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
+- **Unique task names**, enforced at registration, so a duplicate raises instead of silently shadowing
+- **Deduplication** (`@app.task(unique=True)`): an identical call already in flight is reused, not queued twice
+- **Crash recovery**: in-flight tasks of a dead worker are reclaimed (`XAUTOCLAIM`)
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
-- **Abort/cancel** (`job.abort()`) — drops queued tasks and cancels running ones over pub/sub
-- **Sync & async tasks** — blocking sync functions run in a thread pool
+- **Abort/cancel** (`job.abort()`): drops queued tasks and cancels running ones over pub/sub
+- **Sync & async tasks**: blocking sync functions run in a thread pool
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
-- **Multiprocess** (`--workers N`) — N supervised worker processes, for CPU-bound work the GIL would cap
+- **Multiprocess** (`--workers N`): N supervised worker processes, for CPU-bound work the GIL would cap
 
 ## Performance
 
@@ -95,7 +95,7 @@ Read the caveats, because they matter and they are ours to state:
   16-thread box: prefork workers thrash the GIL harder the more cores you give
   them. On a laptop they land near 55. Do not read that row as a 30× win.
 - **The GIL caps in-process CPU work for every Python queue, ArdiQ included.**
-  Your task body is serial per worker. Scale out with processes —
+  Your task body is serial per worker. Scale out with processes:
   `ardiq run app:app --workers 4`.
 - **Absolute numbers do not travel between machines.** Compare rows within a
   table, never against someone else's hardware.
@@ -258,7 +258,7 @@ second = await rebuild_index.enqueue(42)   # nothing new is enqueued
 assert second.id == first.id               # the job already in flight
 ```
 
-You still get a `Job` back — the one already doing the work — so "someone got
+You still get a `Job` back, the one already doing the work, so "someone got
 there first" is never an error to handle. Identity is the call itself, name plus
 arguments, so other shops are unaffected and keyword order doesn't matter. The
 window lasts exactly as long as the task does, retries included; once it

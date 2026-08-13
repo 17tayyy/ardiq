@@ -60,7 +60,7 @@ Usable bare (`@app.task`) or called (`@app.task(max_retries=5)`). See
 [Defining tasks](/guides/tasks/).
 
 With `unique=True`, enqueuing a call identical to one already waiting or running
-returns that job instead of creating a second one — see
+returns that job instead of creating a second one. See
 [Unique tasks](/guides/enqueuing/#unique-tasks).
 
 ### `cron(...)`

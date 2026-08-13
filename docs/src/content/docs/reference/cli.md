@@ -48,8 +48,8 @@ $ ardiq run example:app --workers 4    # four worker processes
 
 ### `--workers`
 
-One worker is one process, and one process runs your task bodies on one core —
-the GIL sees to that. `--workers N` starts N of them against the same queue and
+One worker is one process, and one process runs your task bodies on one core,
+because the GIL sees to that. `--workers N` starts N against the same queue and
 supervises them: the banner is printed once, each child logs under its own
 `worker_id`, and **SIGINT**/**SIGTERM** reach all of them.
 
@@ -60,7 +60,7 @@ coordinated. Point N at your cores for CPU-bound work; for I/O-bound work
 cheaper knob.
 
 If a worker exits non-zero, the supervisor stops the others and exits with that
-code — a crashed worker fails the whole deployment rather than quietly running
+code: a crashed worker fails the whole deployment rather than quietly running
 short-handed. Under `--burst` every worker exits when the queue is drained and
 the supervisor exits `0`.
 

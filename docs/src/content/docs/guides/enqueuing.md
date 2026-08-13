@@ -115,8 +115,8 @@ second = await rebuild_index.enqueue(42)   # nothing new is enqueued
 assert second.id == first.id               # the job already in flight
 ```
 
-You still get a `Job` back — the one already doing the work — so the caller
-never has to treat "someone got there first" as an error.
+You still get a `Job` back, the one already doing the work, so the caller never
+has to treat "someone got there first" as an error.
 
 Identity is the call itself: the task's name plus its arguments. So
 `rebuild_index(42)` and `rebuild_index(43)` are two different jobs, and keyword
@@ -124,7 +124,7 @@ order is irrelevant (`notify(to="ada", subject="hi")` is the same call as
 `notify(subject="hi", to="ada")`). The id you get back shows it:
 `unique:rebuild_index:9f2c…`, which is also what you'll see in Redis.
 
-The window is exactly as long as the task exists — from enqueue until it
+The window is exactly as long as the task exists: from enqueue until it
 finishes, retries included. Once it has finished, the same call can be enqueued
 again, and that new run **replaces the previous result** under the same id: an
 older `Job` handle you kept around will read the new run's outcome, not the one
@@ -144,13 +144,13 @@ await queue.ref("rebuild_index", unique=True).enqueue(42)
 
 `unique` is a per-call option like any other, so `.options(unique=True)` turns it
 on for one dispatch and `.options(unique=False)` turns it off for a task that
-declared it. Passing your own `task_id` wins over both — an explicit id is
+declared it. Passing your own `task_id` wins over both, since an explicit id is
 already a deduplication key.
 
 :::note[Not a lock on the function]
 Uniqueness is per *call*, not per task: a hundred `rebuild_index` jobs for a
 hundred different shops all run, as they should. There is nothing here that
-limits how many instances of one task run at once — that's what
+limits how many instances of one task run at once. That's what
 [`concurrency`](/reference/configuration/) is for.
 :::
 
