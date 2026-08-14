@@ -17,17 +17,29 @@
   --sl-color-accent-high: #511604;
 }
 
+/* Starlight always renders a content panel for the page title, and PageTitle.astro
+   renders nothing on the splash page. The panel keeps its padding and the next
+   panel's border, so it reads as a blank second header — collapse both. `> *`
+   matches elements only, so a panel holding real content is never hidden. */
+.content-panel:not(:has(> .sl-container > *)) {
+  display: none;
+}
+
+.content-panel:not(:has(> .sl-container > *)) + .content-panel {
+  border-top: 0;
+}
+
 .landing-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 1.5rem;
-  padding-block: clamp(2rem, 5vw, 4.5rem);
+  gap: 1.25rem;
+  padding-block: clamp(1.25rem, 2.5vw, 2rem);
 }
 
 .landing-logo {
-  width: min(100%, 20rem);
+  width: min(100%, 18.5rem);
   height: auto;
 }
 
