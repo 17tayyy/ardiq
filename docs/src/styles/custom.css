@@ -1,3 +1,10 @@
+/* This file is bundled before Starlight's own CSS, so the `@layer` below would
+   register starlight.components as the FIRST layer — the weakest one — and
+   Starlight's later ordering statement could no longer move it. Restate the
+   canonical order here, before any layer is used. */
+@layer starlight.base, starlight.reset, starlight.core, starlight.content,
+  starlight.components, starlight.utils;
+
 :root {
   --sl-color-accent-low: #3a160c;
   --sl-color-accent: #c63d1b;
