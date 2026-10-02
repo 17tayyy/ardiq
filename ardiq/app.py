@@ -9,10 +9,10 @@ import inspect
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, overload
+from typing import Any, cast, overload
 
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
@@ -74,7 +74,7 @@ class Ardiq:
         self._registry: dict[str, _Registered] = {}
         self._crons: dict[str, tuple[_Schedule, str | None]] = {}
         self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
-        self._lifespan: Callable[[], AsyncIterator[Any]] | None = None
+        self._lifespan: Callable[[], AsyncGenerator[Any]] | None = None
         self._error_hooks: list[ErrorHook] = []
         self.state = State()
         self._cron_poll_s = cron_poll_s
@@ -270,7 +270,7 @@ class Ardiq:
                 "it, or give one an explicit name= in the decorator."
             )
         self._registry[task_name] = _Registered(
-            fn, max_retries, backoff_ms, asyncio.iscoroutinefunction(fn), timeout
+            fn, max_retries, backoff_ms, inspect.iscoroutinefunction(fn), timeout
         )
         return task_name
 
@@ -283,7 +283,7 @@ class Ardiq:
         never pay for it."""
         if not inspect.isasyncgenfunction(fn):
             raise TypeError("@lifespan needs an async generator function (one yield)")
-        self._lifespan = fn
+        self._lifespan = cast(Callable[[], AsyncGenerator[Any]], fn)
         return fn
 
     @contextlib.asynccontextmanager
