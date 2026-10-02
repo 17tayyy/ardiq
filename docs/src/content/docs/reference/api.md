@@ -262,3 +262,13 @@ raise Retry("rate limited", delay_ms=30_000)
 |---|---|---|---|
 | `message` | `str` | `"retry requested"` | Why, recorded as the error if the retries run out. |
 | `delay_ms` | `int \| None` | `None` | Wait this long before the next attempt; `None` uses the task's backoff. |
+
+## `ardiq.testing.inline`
+
+`inline(app)` is an async context manager. While it is open, `app` runs each task as
+soon as it is enqueued, in memory, with no Redis. See [Testing](/guides/testing/).
+
+```python
+async with inline(app):
+    job = await add.enqueue(2, 3)
+```

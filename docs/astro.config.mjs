@@ -94,6 +94,7 @@ export default defineConfig({
             { label: "Aborting tasks", slug: "guides/aborting" },
             { label: "Shared resources", slug: "guides/lifespan" },
             { label: "Running a worker", slug: "guides/worker" },
+            { label: "Testing", slug: "guides/testing" },
             { label: "Serialization", slug: "guides/serialization" },
           ],
         },

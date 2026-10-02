@@ -67,6 +67,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Abort/cancel** (`job.abort()`): drops queued tasks and cancels running ones over pub/sub
 - **Sync & async tasks**: blocking sync functions run in a thread pool
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
+- **Testing mode** (`ardiq.testing.inline`): tasks run on enqueue, no Redis or worker needed
 - **Multiprocess** (`--workers N`): N supervised worker processes, for CPU-bound work the GIL would cap
 
 ## Performance
@@ -416,6 +417,27 @@ Recurring tasks fire while a worker is running, and each occurrence is an ordina
 task with its own result, status, retries and timeout. The cron syntax is the
 common subset — `*`, lists `,`, ranges `a-b`, and steps `*/n` — at minute
 resolution; use `every=` for sub-minute schedules.
+
+## Testing
+
+`ardiq.testing.inline` runs tasks the moment they are enqueued, in memory, so
+tests need no Redis and no worker:
+
+```python
+from ardiq.testing import inline
+
+
+async def test_add():
+    async with inline(app):
+        job = await add.enqueue(2, 3)
+        result = await job.result()
+        assert result.value == 5
+```
+
+The task goes through the same code a worker runs, so retries, timeouts,
+`@app.on_error` hooks, `current_task()` and the serializer all behave as in
+production. The `@app.lifespan` hook runs around the block. Retries run back to
+back with no backoff, and delays and schedules are ignored.
 
 ## Configuration
 
