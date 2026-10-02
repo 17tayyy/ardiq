@@ -71,6 +71,8 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+# ruff 0.16 formats code blocks in Markdown; the docs keep their hand-aligned comments
+exclude = ["*.md", "*.mdx"]
 
 [tool.ty.environment]
 python-version = "3.12"
