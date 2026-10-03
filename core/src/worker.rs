@@ -108,40 +108,69 @@ impl Worker {
         let (tx, rx) =
             async_channel::bounded::<StreamMessage>(self.config.prefetch.max(1) as usize);
 
-        let mut handles = Vec::new();
-
+        let mut consumers = Vec::new();
         for _ in 0..self.config.concurrency.max(1) {
             let worker = self.clone();
             let state = state.clone();
             let rx = rx.clone();
             let conn = shared.clone();
-            handles.push(tokio::spawn(async move {
+            consumers.push(tokio::spawn(async move {
                 worker.consumer(rx, state, conn).await;
             }));
         }
-        drop(rx);
 
-        {
+        // Outlives `cancel`: a task still finishing after a stop must keep its
+        // heartbeat, or another worker reclaims it and runs it a second time.
+        let drained = CancellationToken::new();
+        let heartbeat = {
             let worker = self.clone();
             let state = state.clone();
             let conn = shared.clone();
-            handles.push(tokio::spawn(async move {
-                worker.heartbeat(state, conn).await;
-            }));
-        }
+            let drained = drained.clone();
+            tokio::spawn(async move {
+                worker.heartbeat(state, conn, drained).await;
+            })
+        };
 
-        {
+        let producer = {
             let worker = self.clone();
             let state = state.clone();
-            handles.push(tokio::spawn(async move {
+            tokio::spawn(async move {
                 if let Err(err) = worker.producer(tx, state, producer_conn).await {
                     tracing::error!("ardiq producer stopped: {err}");
                 }
-            }));
-        }
+            })
+        };
 
-        for handle in handles {
-            let _ = handle.await;
+        // The producer returns on a stop (or a Redis error), never on its own.
+        let _ = producer.await;
+        if !self.config.burst {
+            let in_flight = state.in_flight.lock().await.len();
+            tracing::info!(
+                worker_id = %self.config.worker_id,
+                in_flight,
+                "ardiq worker draining"
+            );
+        }
+        for consumer in consumers {
+            let _ = consumer.await;
+        }
+        drained.cancel();
+        let _ = heartbeat.await;
+
+        let leftover: Vec<StreamMessage> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        if !leftover.is_empty() {
+            let mut conn = shared.clone();
+            match self.queue.release(&mut conn, &leftover).await {
+                Ok(()) => tracing::info!(
+                    released = leftover.len(),
+                    "ardiq returned prefetched tasks to the queue"
+                ),
+                Err(err) => tracing::warn!(
+                    "ardiq could not return {} prefetched tasks, they wait for reclaim: {err}",
+                    leftover.len()
+                ),
+            }
         }
 
         tracing::debug!(
@@ -213,6 +242,7 @@ impl Worker {
     ) {
         loop {
             let msg = tokio::select! {
+                biased; // a stop wins over a message waiting in the channel
                 _ = self.cancel.cancelled() => break,
                 msg = rx.recv() => match msg {
                     Ok(msg) => msg,
@@ -285,11 +315,16 @@ impl Worker {
         }
     }
 
-    async fn heartbeat(&self, state: RunState, mut conn: ConnectionManager) {
+    async fn heartbeat(
+        &self,
+        state: RunState,
+        mut conn: ConnectionManager,
+        drained: CancellationToken,
+    ) {
         let interval = Duration::from_millis(((self.config.idle_timeout_ms as f64) * 0.9) as u64);
         loop {
             tokio::select! {
-                _ = self.cancel.cancelled() => break,
+                _ = drained.cancelled() => break,
                 _ = tokio::time::sleep(interval) => {}
             }
 

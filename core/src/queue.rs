@@ -32,7 +32,6 @@ pub struct StreamMessage {
     pub message_id: String,
     pub task_id: String,
     pub priority: String,
-    #[allow(dead_code)]
     pub enqueue_time: i64,
 }
 
@@ -607,6 +606,35 @@ impl Queue {
             .arg(fire_at_ms)
             .arg(&msg.task_id)
             .ignore();
+        pipe.query_async(conn).await
+    }
+
+    /// Hand prefetched, never-started messages back to their streams, so a
+    /// stopping worker does not hold them until `idle_timeout_ms` reclaims them.
+    pub async fn release<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        msgs: &[StreamMessage],
+    ) -> RedisResult<()> {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        for msg in msgs {
+            let stream = self.stream_key(&msg.priority);
+            pipe.cmd("XADD")
+                .arg(&stream)
+                .arg("*")
+                .arg("task_id")
+                .arg(&msg.task_id)
+                .arg("enqueue_time")
+                .arg(msg.enqueue_time)
+                .ignore();
+            pipe.cmd("XACK")
+                .arg(&stream)
+                .arg(GROUP)
+                .arg(&msg.message_id)
+                .ignore();
+            pipe.cmd("XDEL").arg(&stream).arg(&msg.message_id).ignore();
+        }
         pipe.query_async(conn).await
     }
 
