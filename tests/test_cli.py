@@ -172,3 +172,23 @@ async def test_dlq_replay_all_and_delete_report_missing(redis, make_app, capsys)
     err = capsys.readouterr().err
     assert "nope: not in the dead letter queue" in err
     assert "deleted 1 of 2" in err and "replayed 1 of 1" in err
+
+
+async def test_a_second_signal_forces_the_exit(redis, make_app, monkeypatch):
+    app = make_app("cli_force", concurrency=1, poll_block_ms=50)
+    forced = asyncio.Event()
+    monkeypatch.setattr(cli, "_force_exit", forced.set)
+
+    @app.task
+    async def slow() -> None:
+        await asyncio.sleep(1)
+
+    await slow.enqueue()
+    worker = asyncio.ensure_future(serve(app, burst=False, quiet=True))
+    await asyncio.sleep(0.3)
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.sleep(0.05)
+    assert not forced.is_set()  # the first one only drains
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(forced.wait(), timeout=5)
+    await asyncio.wait_for(worker, timeout=15)

@@ -49,7 +49,17 @@ async def serve(
 
     def _on_signal() -> None:
         nonlocal stop_reason
+        if stop_reason == "signal":
+            # Asked twice: stop waiting. What was running is not acknowledged,
+            # so another worker reclaims it after idle_timeout_ms.
+            logger.warning(f"worker forced to exit worker_id={app.worker_id}")
+            _force_exit()
+            return
         stop_reason = "signal"
+        logger.info(
+            f"worker stopping worker_id={app.worker_id}, finishing in-flight tasks "
+            "(signal again to exit now)"
+        )
         app.stop()
 
     loop = asyncio.get_running_loop()
@@ -73,6 +83,11 @@ async def serve(
     finally:
         reason = stop_reason or ("burst" if burst else "unknown")
         logger.info(f"worker stopped worker_id={app.worker_id} reason={reason}")
+
+
+def _force_exit() -> None:
+    logging.shutdown()
+    os._exit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
