@@ -68,6 +68,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Abort/cancel** (`job.abort()`): drops queued tasks and cancels running ones over pub/sub
 - **Sync & async tasks**: blocking sync functions run in a thread pool
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
+- **Graceful shutdown**: on SIGTERM a worker finishes what it is running and hands prefetched tasks straight back, so a rolling deploy delays nothing
 - **Testing mode** (`ardiq.testing.inline`): tasks run on enqueue, no Redis or worker needed
 - **Multiprocess** (`--workers N`): N supervised worker processes, for CPU-bound work the GIL would cap
 

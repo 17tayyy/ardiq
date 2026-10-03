@@ -97,5 +97,7 @@ dead letter queue is reported, and the command exits with status 1.
 ## Signals
 
 `ardiq run` installs handlers for **SIGINT** (`Ctrl-C`) and **SIGTERM** that call
-`app.stop()`, so the worker shuts down gracefully and lets in-flight tasks settle. See
-[Running a worker](/guides/worker/#graceful-shutdown).
+`app.stop()`. The worker finishes the tasks it is running, returns the ones it had only
+prefetched to the queue, and exits. A second signal exits at once, leaving any running
+task to be reclaimed by another worker. With `--workers`, the supervisor passes each
+signal on to every worker. See [Running a worker](/guides/worker/#graceful-shutdown).

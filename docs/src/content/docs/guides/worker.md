@@ -70,9 +70,31 @@ down gracefully.
 
 ## Graceful shutdown
 
-The CLI installs handlers for **SIGINT** and **SIGTERM** that call `app.stop()`, so
-`Ctrl-C` or a `docker stop` lets in-flight tasks settle before the process exits. If you
-run the loop yourself and want the same behavior, wire it up:
+The CLI installs handlers for **SIGINT** and **SIGTERM** that call `app.stop()`. A stopping
+worker drains instead of dropping what it holds:
+
+1. It stops reading new tasks.
+2. Tasks already running finish, and their results are stored as usual. Their heartbeat
+   keeps going until they do, so no other worker reclaims a task that is still running,
+   however long it takes.
+3. Tasks it had prefetched but not started go straight back to their queue, so other
+   workers pick them up at once instead of after `idle_timeout_ms`.
+4. The `@app.lifespan` teardown runs, and the process exits.
+
+A **second** signal skips the wait and exits at once. Whatever was still running is not
+acknowledged, so another worker reclaims it after `idle_timeout_ms` and runs it again.
+Nothing is lost, but that task does run twice.
+
+On Kubernetes, `kubectl` and rolling deploys send `SIGTERM`, then `SIGKILL` once
+`terminationGracePeriodSeconds` (30 s by default) runs out. Set it above your longest
+task so a deploy never cuts one short:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 300
+```
+
+If you run the loop yourself and want the same behavior, wire it up:
 
 ```python
 import asyncio
