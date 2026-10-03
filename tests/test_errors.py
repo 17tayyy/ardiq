@@ -109,7 +109,7 @@ async def test_a_hook_that_raises_is_logged_and_ignored(make_app, caplog):
     with caplog.at_level(logging.ERROR, logger="ardiq"):
         outcome, env, _ = await app._execute("t1", _pack(app, "boom"), 1)
 
-    assert outcome == 1  # FAILURE, unchanged
+    assert outcome == 3  # DEAD, unchanged
     result = app._unpack(env)
     assert result is not None and result.value == "ValueError('original')"
     assert len(seen) == 1  # a broken hook doesn't stop the next one

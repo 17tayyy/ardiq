@@ -21,6 +21,7 @@ from ardiq.cron import _Schedule
 from ardiq.exceptions import Retry
 from ardiq.models import (
     ABORTED,
+    DeadLetter,
     ErrorContext,
     State,
     TaskContext,
@@ -29,8 +30,9 @@ from ardiq.models import (
 )
 from ardiq.tasks import Job, PreparedTask, Task
 
-# Outcome codes for the Rust core's executor protocol.
-SUCCESS, FAILURE, RETRY = 0, 1, 2
+# Outcome codes for the Rust core's executor protocol. DEAD is a failure the
+# core also keeps in the dead letter queue.
+SUCCESS, FAILURE, RETRY, DEAD = 0, 1, 2, 3
 DEFAULT_MAX_RETRIES = 3
 
 ErrorHook = Callable[[ErrorContext], Any]
@@ -512,7 +514,7 @@ class Ardiq:
                 ErrorContext(task_name, task_id, LookupError(err), tries, False)
             )
             env = self._envelope(False, err, tries, enqueue_time, start)
-            return FAILURE, env, 0
+            return DEAD, env, 0
 
         logger.debug(
             f"task started id={task_id} name={task_name!r} worker={worker_id} try={tries}"
@@ -585,7 +587,7 @@ class Ardiq:
             await self._fire_error_hooks(
                 ErrorContext(task_name, task_id, error, tries, False)
             )
-            return FAILURE, self._envelope(False, err, tries, enqueue_time, start), 0
+            return DEAD, self._envelope(False, err, tries, enqueue_time, start), 0
 
         logger.debug(
             f"task succeeded id={task_id} name={task_name!r} worker={worker_id} "
@@ -647,6 +649,53 @@ class Ardiq:
         """
         env = self._envelope(False, ABORTED, 0, 0, _now_ms())
         return await self._core.abort(task_id, env)
+
+    async def dead_letters(self, limit: int = 100) -> list[DeadLetter]:
+        """Tasks that failed for good, newest first. They stay until replayed
+        or deleted; an aborted task is never one of them."""
+        entries = await self._core.dead_list(limit)
+        return [self._dead_letter(*entry) for entry in entries]
+
+    async def dead_count(self) -> int:
+        """Number of tasks in the dead letter queue."""
+        return await self._core.dead_count()
+
+    async def replay(self, task_id: str) -> Job | None:
+        """Enqueue a dead task again, same id and arguments, with a fresh retry
+        budget. Returns its `Job`, or `None` if no dead task has that id."""
+        entry = await self._core.dead_get(task_id)
+        if entry is None:
+            return None
+        _, payload, _, priority, _ = entry
+        self._check_priority(priority)  # a lane dropped since would swallow it
+        data = self._loads(payload)
+        # Repacked for a fresh enqueue time. The script also clears the old
+        # failure, so the Job does not report `complete` before it reruns.
+        fresh = self._pack(data["f"], tuple(data["a"]), data["k"])
+        if not await self._core.dead_replay(task_id, fresh, priority):
+            return None  # replayed or deleted by someone else meanwhile
+        return Job(self, task_id)
+
+    async def delete_dead(self, task_id: str) -> bool:
+        """Drop a task from the dead letter queue without running it."""
+        return await self._core.dead_delete(task_id)
+
+    def _dead_letter(
+        self, task_id: str, payload: bytes, result: bytes, priority: str, at: int
+    ) -> DeadLetter:
+        data = self._loads(payload)
+        env = self._loads(result)
+        return DeadLetter(
+            task_id=task_id,
+            fn_name=data["f"],
+            args=tuple(data["a"]),
+            kwargs=data["k"],
+            priority=priority,
+            error=env["r"],
+            tries=env["t"],
+            enqueue_time=int(data.get("t", 0)),
+            failed_at=at,
+        )
 
     async def status(self, task_id: str) -> str:
         """A task's status: 'queued', 'scheduled', 'running', 'complete', or 'not_found'."""

@@ -119,7 +119,7 @@ async def test_manual_retry_respects_max_retries(make_app):
     last, env, _ = await app._execute("t1", _pack(app, "forever"), 2)
 
     assert first == 2  # RETRY
-    assert last == 1  # FAILURE — the budget is not infinite
+    assert last == 3  # DEAD, the budget is not infinite
     result = app._unpack(env)
     assert result is not None and "still not ready" in str(result.value)
 

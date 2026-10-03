@@ -14,7 +14,11 @@ use crate::queue::{now_ms, Queue, ResultTtl, StreamMessage};
 pub enum Outcome {
     Success,
     Failure,
-    Retry { delay_ms: Option<i64> },
+    /// Failed for good: also kept in the dead letter queue for replay.
+    Dead,
+    Retry {
+        delay_ms: Option<i64>,
+    },
 }
 
 #[derive(Debug)]
@@ -28,7 +32,7 @@ pub trait TaskExecutor: Send + Sync {
     async fn execute(
         &self,
         task_id: String,
-        payload: Vec<u8>,
+        payload: &[u8],
         tries: i64,
         aborted: bool,
     ) -> ExecOutcome;
@@ -263,14 +267,15 @@ impl Worker {
 
         let exec = self
             .executor
-            .execute(msg.task_id.clone(), payload, tries, aborted)
+            .execute(msg.task_id.clone(), &payload, tries, aborted)
             .await;
 
         match exec.outcome {
-            Outcome::Success | Outcome::Failure => {
+            Outcome::Success | Outcome::Failure | Outcome::Dead => {
                 let ttl = ResultTtl::from_ms(self.config.result_ttl_ms);
+                let dead = matches!(exec.outcome, Outcome::Dead).then_some(payload.as_slice());
                 self.queue
-                    .complete(conn, msg, &exec.result, ttl, now_ms())
+                    .complete(conn, msg, &exec.result, ttl, dead, now_ms())
                     .await
             }
             Outcome::Retry { delay_ms } => {

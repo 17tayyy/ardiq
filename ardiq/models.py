@@ -77,3 +77,20 @@ class TaskInfo(NamedTuple):
     tries: int
     status: str
     scheduled_at: int | None = None  # epoch ms if waiting in the delayed queue
+
+
+class DeadLetter(NamedTuple):
+    """A task that failed for good, kept in the dead letter queue for replay.
+
+    `error` is the failure as its result reports it; times are epoch ms.
+    """
+
+    task_id: str
+    fn_name: str
+    args: tuple
+    kwargs: dict
+    priority: str
+    error: str
+    tries: int
+    enqueue_time: int
+    failed_at: int

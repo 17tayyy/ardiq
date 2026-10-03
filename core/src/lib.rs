@@ -15,7 +15,7 @@ use redis::aio::ConnectionManager;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
-use crate::queue::{now_ms, Queue, ResultTtl, StagedTask};
+use crate::queue::{now_ms, DeadEntry, Queue, ResultTtl, StagedTask};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
 const DEFAULT_ABORT_MARKER_MS: i64 = 300_000;
@@ -45,12 +45,12 @@ impl TaskExecutor for PyExecutor {
     async fn execute(
         &self,
         task_id: String,
-        payload: Vec<u8>,
+        payload: &[u8],
         tries: i64,
         aborted: bool,
     ) -> ExecOutcome {
         let future = Python::attach(|py| -> PyResult<_> {
-            let bytes = PyBytes::new(py, &payload);
+            let bytes = PyBytes::new(py, payload);
             let coro = self
                 .callback
                 .bind(py)
@@ -85,6 +85,7 @@ fn parse_outcome(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ExecOutcome> {
     let retry_after_ms: i64 = bound.get_item(2)?.extract()?;
     let outcome = match code {
         0 => Outcome::Success,
+        3 => Outcome::Dead,
         2 => Outcome::Retry {
             delay_ms: (retry_after_ms > 0).then_some(retry_after_ms),
         },
@@ -467,6 +468,84 @@ impl ArdiqCore {
         })
     }
 
+    fn dead_count<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            queue.dead_count(&mut conn).await.map_err(to_py_err)
+        })
+    }
+
+    /// Newest first: `[(task_id, payload, result, priority, failed_at_ms)]`.
+    fn dead_list<'py>(&self, py: Python<'py>, limit: i64) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let entries = queue.dead_list(&mut conn, limit).await.map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Vec<Py<PyAny>>> {
+                entries
+                    .into_iter()
+                    .map(|entry| dead_tuple(py, entry))
+                    .collect()
+            })
+        })
+    }
+
+    fn dead_get<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let entry = queue
+                .dead_get(&mut conn, &task_id)
+                .await
+                .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                match entry {
+                    Some(entry) => dead_tuple(py, entry),
+                    None => Ok(py.None()),
+                }
+            })
+        })
+    }
+
+    fn dead_replay<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+        payload: Vec<u8>,
+        priority: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            queue
+                .dead_replay(&mut conn, &task_id, &payload, &priority, now_ms())
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn dead_delete<'py>(&self, py: Python<'py>, task_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            queue
+                .dead_delete(&mut conn, &task_id)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
     #[getter]
     fn worker_id(&self) -> &str {
         &self.config.worker_id
@@ -496,6 +575,18 @@ impl ArdiqCore {
     fn result_ttl_ms(&self) -> i64 {
         self.config.result_ttl_ms
     }
+}
+
+fn dead_tuple(py: Python<'_>, entry: DeadEntry) -> PyResult<Py<PyAny>> {
+    let (task_id, payload, result, priority, failed_at) = entry;
+    let tuple = (
+        task_id,
+        PyBytes::new(py, &payload),
+        PyBytes::new(py, &result),
+        priority,
+        failed_at,
+    );
+    Ok(tuple.into_pyobject(py)?.into_any().unbind())
 }
 
 async fn abort_stream(

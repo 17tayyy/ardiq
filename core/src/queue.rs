@@ -17,6 +17,9 @@ pub struct StagedTask {
     pub reset_result: bool,
 }
 
+type DeadFields = (Option<Vec<u8>>, Option<Vec<u8>>, Option<String>);
+pub type DeadEntry = (String, Vec<u8>, Vec<u8>, String, i64);
+
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -58,6 +61,7 @@ pub struct Queue {
     publish_tasks: Script,
     publish_delayed: Script,
     abort_task: Script,
+    replay_dead: Script,
 }
 
 impl Queue {
@@ -81,6 +85,7 @@ impl Queue {
             publish_tasks: Script::new(include_str!("scripts/publish_tasks.lua")),
             publish_delayed: Script::new(include_str!("scripts/publish_delayed.lua")),
             abort_task: Script::new(include_str!("scripts/abort_task.lua")),
+            replay_dead: Script::new(include_str!("scripts/replay_dead.lua")),
         }
     }
 
@@ -111,6 +116,12 @@ impl Queue {
     }
     fn running_set(&self) -> String {
         format!("{}:index:running", self.prefix)
+    }
+    fn dead_key(&self, task_id: &str) -> String {
+        format!("{}:task:dead:{task_id}", self.prefix)
+    }
+    fn dead_set(&self) -> String {
+        format!("{}:index:dead", self.prefix)
     }
     fn health_key(&self, worker_id: &str) -> String {
         format!("{}:health:{worker_id}", self.prefix)
@@ -397,6 +408,7 @@ impl Queue {
         msg: &StreamMessage,
         result: &[u8],
         ttl: ResultTtl,
+        dead: Option<&[u8]>,
         now_ms: i64,
     ) -> RedisResult<()> {
         let stream = self.stream_key(&msg.priority);
@@ -444,11 +456,131 @@ impl Queue {
                     .ignore();
             }
         }
+        // Kept with no TTL: the payload is what a replay needs, after the
+        // result itself has expired.
+        if let Some(payload) = dead {
+            pipe.cmd("HSET")
+                .arg(self.dead_key(&msg.task_id))
+                .arg("payload")
+                .arg(payload)
+                .arg("result")
+                .arg(result)
+                .arg("priority")
+                .arg(&msg.priority)
+                .ignore();
+            pipe.cmd("ZADD")
+                .arg(self.dead_set())
+                .arg(now_ms)
+                .arg(&msg.task_id)
+                .ignore();
+        }
         pipe.cmd("PUBLISH")
             .arg(self.result_channel(&msg.task_id))
             .arg(&msg.task_id)
             .ignore();
         pipe.query_async(conn).await
+    }
+
+    pub async fn dead_count<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<i64> {
+        redis::cmd("ZCARD")
+            .arg(self.dead_set())
+            .query_async(conn)
+            .await
+    }
+
+    /// Newest first: `(task_id, payload, result, priority, failed_at_ms)`.
+    pub async fn dead_list<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        limit: i64,
+    ) -> RedisResult<Vec<DeadEntry>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<(String, i64)> = redis::cmd("ZREVRANGE")
+            .arg(self.dead_set())
+            .arg(0)
+            .arg(limit - 1)
+            .arg("WITHSCORES")
+            .query_async(conn)
+            .await?;
+        if ids.is_empty() {
+            return Ok(Vec::new()); // Redis refuses an empty pipeline
+        }
+        let mut pipe = redis::pipe();
+        for (task_id, _) in &ids {
+            pipe.cmd("HMGET")
+                .arg(self.dead_key(task_id))
+                .arg("payload")
+                .arg("result")
+                .arg("priority");
+        }
+        let fields: Vec<DeadFields> = pipe.query_async(conn).await?;
+        Ok(ids
+            .into_iter()
+            .zip(fields)
+            .filter_map(|((task_id, at), (payload, result, priority))| {
+                Some((task_id, payload?, result?, priority?, at))
+            })
+            .collect())
+    }
+
+    pub async fn dead_get<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<Option<DeadEntry>> {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.cmd("HMGET")
+            .arg(self.dead_key(task_id))
+            .arg("payload")
+            .arg("result")
+            .arg("priority");
+        pipe.cmd("ZSCORE").arg(self.dead_set()).arg(task_id);
+        let ((payload, result, priority), at): (DeadFields, Option<i64>) =
+            pipe.query_async(conn).await?;
+        Ok(match (payload, result, priority, at) {
+            (Some(p), Some(r), Some(pr), Some(at)) => Some((task_id.to_string(), p, r, pr, at)),
+            _ => None,
+        })
+    }
+
+    pub async fn dead_delete<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+    ) -> RedisResult<bool> {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        pipe.cmd("DEL").arg(self.dead_key(task_id)).ignore();
+        pipe.cmd("ZREM").arg(self.dead_set()).arg(task_id);
+        let (removed,): (i64,) = pipe.query_async(conn).await?;
+        Ok(removed == 1)
+    }
+
+    pub async fn dead_replay<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        task_id: &str,
+        payload: &[u8],
+        priority: &str,
+        now_ms: i64,
+    ) -> RedisResult<bool> {
+        let replayed: i64 = self
+            .replay_dead
+            .arg(self.dead_key(task_id))
+            .arg(self.dead_set())
+            .arg(self.task_key(task_id))
+            .arg(self.stream_key(priority))
+            .arg(self.result_key(task_id))
+            .arg(self.results_set())
+            .arg(task_id)
+            .arg(payload)
+            .arg(now_ms)
+            .invoke_async(conn)
+            .await?;
+        Ok(replayed == 1)
     }
 
     pub async fn retry_later<C: ConnectionLike>(

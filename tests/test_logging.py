@@ -54,7 +54,7 @@ async def test_task_failed_terminal_is_error(make_app, caplog):
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
         outcome, _, _ = await app._execute("t3", _pack(app, "boom"), 1)
 
-    assert outcome == 1  # FAILURE
+    assert outcome == 3  # DEAD
     record = next(r for r in caplog.records if r.message.startswith("task failed"))
     assert record.levelno == logging.ERROR
     assert "duration_ms=" in record.message and "error=" in record.message
@@ -66,7 +66,7 @@ async def test_unknown_task_is_error(make_app, caplog):
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
         outcome, _, _ = await app._execute("t4", _pack(app, "does_not_exist"), 1)
 
-    assert outcome == 1  # FAILURE
+    assert outcome == 3  # DEAD
     record = next(r for r in caplog.records if r.message.startswith("task unknown"))
     assert record.levelno == logging.ERROR
     assert "does_not_exist" in record.message
