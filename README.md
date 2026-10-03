@@ -59,6 +59,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
 - **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
+- **Middleware** (`@app.middleware`) around every attempt, plus **headers** from producer to worker (`@app.on_enqueue`), for tracing and metrics
 - **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
 - **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
 - **Unique task names**, enforced at registration, so a duplicate raises instead of silently shadowing
@@ -337,6 +338,30 @@ try:
     job = await queue.send("build_report", user_id)
 except BrokerError:
     raise HTTPException(503, "queue unavailable")
+```
+
+## Middleware
+
+`@app.middleware` wraps every attempt on the worker, in the same
+`(ctx, call_next)` shape as Starlette's HTTP middleware:
+
+```python
+@app.middleware
+async def timing(ctx, call_next):
+    start = time.monotonic()
+    try:
+        return await call_next()
+    finally:
+        metrics.observe(ctx.name, time.monotonic() - start)
+```
+
+To carry context from the producer to the worker, such as a trace id, fill
+`ctx.headers` in an `@app.on_enqueue` hook; the middleware reads them back:
+
+```python
+@app.on_enqueue
+def inject_trace(ctx):
+    propagate.inject(ctx.headers)       # OpenTelemetry
 ```
 
 ## Dead letter queue

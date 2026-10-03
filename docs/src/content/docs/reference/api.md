@@ -103,6 +103,8 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 | `await delete_dead(task_id)` | `bool` | Drop a dead task without running it; `False` if it is not there. |
 | `lifespan(fn)` | decorator | Register worker startup/shutdown; see [Shared resources](/guides/lifespan/). |
 | `on_error(fn)` | decorator | Register a failure hook; see [Handling failures](/guides/errors/). |
+| `middleware(fn)` | decorator | Wrap every attempt with an async `(ctx, call_next)`; see [Middleware](/guides/middleware/). |
+| `on_enqueue(fn)` | decorator | Run a hook as each task is enqueued, to attach headers; see [Middleware](/guides/middleware/#headers-from-producer-to-worker). |
 | `state` | `State` | Worker-scoped resources set by the lifespan hook. |
 
 ## `Task`
@@ -238,6 +240,32 @@ A `NamedTuple` for a task in the [dead letter queue](/guides/dead-letters/).
 | `tries` | `int` | Attempts made before it gave up. |
 | `enqueue_time` | `int` | Epoch ms when enqueued. |
 | `failed_at` | `int` | Epoch ms when it failed for good. |
+
+## `ExecutionContext`
+
+A `NamedTuple` handed to an `@app.middleware` for each attempt. See
+[Middleware](/guides/middleware/).
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `str` | The job id. |
+| `name` | `str` | The task's registered name. |
+| `tries` | `int` | The attempt being made, counting from 1. |
+| `args` | `tuple` | Positional arguments. |
+| `kwargs` | `dict` | Keyword arguments. |
+| `headers` | `dict` | Headers attached at enqueue; empty if none. |
+
+## `EnqueueContext`
+
+A `NamedTuple` handed to an `@app.on_enqueue` hook for each task being enqueued.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `str` | The id the task will have. |
+| `name` | `str` | The task's name. |
+| `args` | `tuple` | Positional arguments. |
+| `kwargs` | `dict` | Keyword arguments. |
+| `headers` | `dict` | Fill it to send entries with the task. |
 
 ## `ErrorContext`
 

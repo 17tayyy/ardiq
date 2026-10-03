@@ -94,6 +94,7 @@ export default defineConfig({
             { label: "Dead letter queue", slug: "guides/dead-letters" },
             { label: "Aborting tasks", slug: "guides/aborting" },
             { label: "Shared resources", slug: "guides/lifespan" },
+            { label: "Middleware", slug: "guides/middleware" },
             { label: "Running a worker", slug: "guides/worker" },
             { label: "Testing", slug: "guides/testing" },
             { label: "Serialization", slug: "guides/serialization" },
