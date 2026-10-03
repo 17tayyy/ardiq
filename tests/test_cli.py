@@ -124,3 +124,51 @@ async def test_a_signal_stops_the_worker(redis, make_app, caplog):
 
     messages = [r.message for r in caplog.records if r.name == "ardiq"]
     assert f"worker stopped worker_id={app.worker_id} reason=signal" in messages
+
+
+def test_dlq_replay_needs_ids_or_all(capsys):
+    for argv in (["dlq", "replay", "x:app"], ["dlq", "delete", "x:app", "id", "--all"]):
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "task ids or --all" in str(exc.value.code)
+
+
+def test_dlq_list_parses_limit():
+    args = build_parser().parse_args(["dlq", "list", "myapp:app", "-n", "5"])
+    assert (args.command, args.action, args.limit) == ("dlq", "list", 5)
+
+
+async def _two_dead(app):
+    @app.task(max_retries=0)
+    async def boom(n: int) -> None:
+        raise RuntimeError(f"broke {n}")
+
+    jobs = [await boom.enqueue(n) for n in range(2)]
+    await asyncio.wait_for(app.run(), timeout=15)
+    return jobs
+
+
+async def test_dlq_list_prints_each_dead_task(redis, make_app, capsys):
+    app = make_app("cli_dlq_list", burst=True, poll_block_ms=50)
+    jobs = await _two_dead(app)
+
+    await cli._dlq_list(app, 50)
+
+    out, err = capsys.readouterr()
+    assert all(job.id in out for job in jobs)
+    assert "boom" in out and "broke 1" in out and "tries=1" in out
+    assert "2 of 2 dead tasks" in err
+
+
+async def test_dlq_replay_all_and_delete_report_missing(redis, make_app, capsys):
+    app = make_app("cli_dlq_apply", burst=True, poll_block_ms=50)
+    first, second = await _two_dead(app)
+
+    assert await cli._dlq_apply(app, "delete", [first.id, "nope"], False) == 1
+    assert await cli._dlq_apply(app, "replay", [], True) == 0
+    assert await app.dead_count() == 0
+    assert await app.status(second.id) == "queued"
+
+    err = capsys.readouterr().err
+    assert "nope: not in the dead letter queue" in err
+    assert "deleted 1 of 2" in err and "replayed 1 of 1" in err

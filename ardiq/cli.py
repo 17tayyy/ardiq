@@ -1,4 +1,4 @@
-"""Command-line interface: `ardiq run module:app`."""
+"""Command-line interface: `ardiq run module:app` and `ardiq dlq ...`."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ardiq._core import init_logging
@@ -103,6 +104,26 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Run N worker processes instead of one (default: 1)",
     )
+
+    dlq = sub.add_parser(
+        "dlq",
+        help="Inspect and replay tasks that failed for good",
+        description="Inspect and replay tasks that failed for good",
+    )
+    actions = dlq.add_subparsers(dest="action", metavar="ACTION", required=True)
+    show = actions.add_parser("list", help="List dead tasks, newest first")
+    show.add_argument("app", help="App path, e.g. 'myapp:app'")
+    show.add_argument(
+        "-n", "--limit", type=_positive, default=50, help="How many (default: 50)"
+    )
+    for name, verb in (
+        ("replay", "Enqueue dead tasks again"),
+        ("delete", "Drop dead tasks"),
+    ):
+        action = actions.add_parser(name, help=verb)
+        action.add_argument("app", help="App path, e.g. 'myapp:app'")
+        action.add_argument("ids", nargs="*", metavar="ID", help="Task ids")
+        action.add_argument("--all", action="store_true", help="Every dead task")
     return parser
 
 
@@ -192,12 +213,58 @@ def _run(args: argparse.Namespace) -> None:
         asyncio.run(serve(worker, args.burst, app_path=args.app, quiet=args.quiet))
 
 
+def _dlq(args: argparse.Namespace) -> None:
+    if args.action != "list" and bool(args.ids) == args.all:
+        raise SystemExit(f"ardiq dlq {args.action}: give either task ids or --all")
+    app = import_string(args.app)
+    if args.action == "list":
+        asyncio.run(_dlq_list(app, args.limit))
+        return
+    missing = asyncio.run(_dlq_apply(app, args.action, args.ids, args.all))
+    if missing:
+        raise SystemExit(1)
+
+
+async def _dlq_list(app: Ardiq, limit: int) -> None:
+    dead = await app.dead_letters(limit)
+    total = await app.dead_count()
+    for d in dead:
+        when = datetime.fromtimestamp(d.failed_at / 1000, UTC)
+        print(
+            f"{d.task_id}  {d.fn_name}  {when:%Y-%m-%d %H:%M:%S}Z  "
+            f"tries={d.tries}  {d.error}"
+        )
+    print(f"{len(dead)} of {total} dead tasks", file=sys.stderr)
+
+
+async def _dlq_apply(app: Ardiq, action: str, ids: list[str], every: bool) -> int:
+    if every:
+        # A snapshot: a replay that dies again while this runs waits for the
+        # next call instead of looping forever.
+        ids = [d.task_id for d in await app.dead_letters(await app.dead_count())]
+    missing = 0
+    for task_id in ids:
+        if action == "replay":
+            done = await app.replay(task_id) is not None
+        else:
+            done = await app.delete_dead(task_id)
+        if not done:
+            missing += 1
+            print(f"{task_id}: not in the dead letter queue", file=sys.stderr)
+    verb = "replayed" if action == "replay" else "deleted"
+    print(f"{verb} {len(ids) - missing} of {len(ids)}", file=sys.stderr)
+    return missing
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help(sys.stderr)
         raise SystemExit(1)
+    if args.command == "dlq":
+        _dlq(args)
+        return
     _run(args)
 
 
