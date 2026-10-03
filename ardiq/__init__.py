@@ -13,7 +13,9 @@ from ardiq.context import current_task
 from ardiq.exceptions import ArdiqError, BrokerError, Retry
 from ardiq.models import (
     DeadLetter,
+    EnqueueContext,
     ErrorContext,
+    ExecutionContext,
     State,
     TaskContext,
     TaskInfo,
@@ -26,7 +28,9 @@ __all__ = [
     "ArdiqError",
     "BrokerError",
     "DeadLetter",
+    "EnqueueContext",
     "ErrorContext",
+    "ExecutionContext",
     "Job",
     "PreparedTask",
     "Retry",

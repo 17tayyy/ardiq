@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import inspect
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+)
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, cast, overload
@@ -22,7 +30,9 @@ from ardiq.exceptions import Retry
 from ardiq.models import (
     ABORTED,
     DeadLetter,
+    EnqueueContext,
     ErrorContext,
+    ExecutionContext,
     State,
     TaskContext,
     TaskInfo,
@@ -36,6 +46,8 @@ SUCCESS, FAILURE, RETRY, DEAD = 0, 1, 2, 3
 DEFAULT_MAX_RETRIES = 3
 
 ErrorHook = Callable[[ErrorContext], Any]
+EnqueueHook = Callable[[EnqueueContext], Any]
+Middleware = Callable[[ExecutionContext, Callable[[], Awaitable[Any]]], Awaitable[Any]]
 
 ABORT_WAIT_MS = 500
 
@@ -78,6 +90,8 @@ class Ardiq:
         self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
         self._lifespan: Callable[[], AsyncGenerator[Any]] | None = None
         self._error_hooks: list[ErrorHook] = []
+        self._enqueue_hooks: list[EnqueueHook] = []
+        self._middleware: list[Middleware] = []
         self.state = State()
         self._cron_poll_s = cron_poll_s
         if redis_url is not None and not redis_url.strip():
@@ -327,6 +341,41 @@ class Ardiq:
             except Exception:
                 logger.exception("ardiq on_error hook failed for %r", ctx.name)
 
+    def middleware(self, fn: Middleware) -> Middleware:
+        """Register a middleware: an async `(ctx, call_next)` that wraps every
+        attempt on the worker. Await `call_next()` to run the rest of the chain
+        and return its result, or raise to fail the attempt.
+
+        The first one registered is the outermost. The task's `timeout` covers
+        the task alone, so a middleware sees its `TimeoutError`.
+        """
+        # An instance whose class defines `async def __call__` counts too.
+        call = type(fn).__call__
+        if not (inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(call)):
+            raise TypeError("@middleware needs an async function (ctx, call_next)")
+        self._middleware.append(fn)
+        return fn
+
+    def on_enqueue(self, fn: EnqueueHook) -> EnqueueHook:
+        """Register a hook run for every task as it is enqueued, from any path.
+        Put entries in `ctx.headers` to send them with the task; middleware
+        reads them on the worker. Sync or async. One that raises fails the
+        enqueue, so nothing is sent without the headers it was meant to carry.
+        """
+        self._enqueue_hooks.append(fn)
+        return fn
+
+    async def _headers(
+        self, task_id: str, name: str, args: tuple, kwargs: dict
+    ) -> dict[str, Any]:
+        headers: dict[str, Any] = {}
+        ctx = EnqueueContext(task_id, name, args, kwargs, headers)
+        for hook in self._enqueue_hooks:
+            outcome = hook(ctx)
+            if inspect.isawaitable(outcome):
+                await outcome
+        return headers
+
     def ref(
         self, name: str, *, priority: str | None = None, unique: bool = False
     ) -> Task[..., Any]:
@@ -359,10 +408,15 @@ class Ardiq:
             job_id = task.task_id or self._task_id(
                 task.name, task.args, task.kwargs, task.unique
             )
+            headers = (
+                await self._headers(job_id, task.name, task.args, task.kwargs)
+                if self._enqueue_hooks
+                else None
+            )
             items.append(
                 (
                     job_id,
-                    self._pack(task.name, task.args, task.kwargs),
+                    self._pack(task.name, task.args, task.kwargs, headers),
                     task.priority or self._default_priority,
                     task.delay_ms,
                     task.schedule_ms,
@@ -391,7 +445,12 @@ class Ardiq:
     ) -> Job:
         self._check_priority(priority)
         job_id = task_id or self._task_id(name, args, kwargs, unique)
-        payload = self._pack(name, args, kwargs)
+        headers = (
+            await self._headers(job_id, name, args, kwargs)
+            if self._enqueue_hooks
+            else None
+        )
+        payload = self._pack(name, args, kwargs, headers)
         await self._core.enqueue(
             job_id,
             payload,
@@ -454,8 +513,13 @@ class Ardiq:
             if running is not None and not running.done():
                 running.cancel()
 
-    def _pack(self, fn_name: str, args: tuple, kwargs: dict) -> bytes:
-        return self._dumps({"f": fn_name, "a": list(args), "k": kwargs, "t": _now_ms()})
+    def _pack(
+        self, fn_name: str, args: tuple, kwargs: dict, headers: dict | None = None
+    ) -> bytes:
+        data = {"f": fn_name, "a": list(args), "k": kwargs, "t": _now_ms()}
+        if headers:  # absent unless used, so older workers see the same payload
+            data["h"] = headers
+        return self._dumps(data)
 
     def _envelope(
         self, success: bool, result: Any, tries: int, enqueue_time: int, start: int
@@ -525,17 +589,32 @@ class Ardiq:
             self._running[task_id] = current
         token = _current_task.set(TaskContext(task_id, task_name, tries))
 
-        result = None
-        error: Exception | None = None
-        try:
+        async def call_task() -> Any:
             if reg.is_async:
                 coro = reg.fn(*data["a"], **data["k"])
             else:
                 coro = asyncio.to_thread(reg.fn, *data["a"], **data["k"])
             if reg.timeout is not None:
-                result = await asyncio.wait_for(coro, reg.timeout)
-            else:
-                result = await coro
+                return await asyncio.wait_for(coro, reg.timeout)
+            return await coro
+
+        call: Callable[[], Awaitable[Any]] = call_task
+        if self._middleware:
+            ctx = ExecutionContext(
+                task_id,
+                task_name,
+                tries,
+                tuple(data["a"]),
+                data["k"],
+                data.get("h") or {},
+            )
+            for mw in reversed(self._middleware):
+                call = functools.partial(mw, ctx, call)
+
+        result = None
+        error: Exception | None = None
+        try:
+            result = await call()
         except asyncio.CancelledError:
             if current is not None:
                 current.uncancel()  # we handled it; let the task finish normally
@@ -671,7 +750,7 @@ class Ardiq:
         data = self._loads(payload)
         # Repacked for a fresh enqueue time. The script also clears the old
         # failure, so the Job does not report `complete` before it reruns.
-        fresh = self._pack(data["f"], tuple(data["a"]), data["k"])
+        fresh = self._pack(data["f"], tuple(data["a"]), data["k"], data.get("h"))
         if not await self._core.dead_replay(task_id, fresh, priority):
             return None  # replayed or deleted by someone else meanwhile
         return Job(self, task_id)

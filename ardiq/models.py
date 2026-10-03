@@ -42,6 +42,31 @@ class TaskContext(NamedTuple):
     tries: int
 
 
+class EnqueueContext(NamedTuple):
+    """What an `@app.on_enqueue` hook is handed for each task being enqueued.
+
+    Add entries to `headers` to send them along with the task; a worker's
+    middleware reads them back from `ExecutionContext.headers`.
+    """
+
+    task_id: str
+    name: str
+    args: tuple
+    kwargs: dict
+    headers: dict[str, Any]
+
+
+class ExecutionContext(NamedTuple):
+    """What an `@app.middleware` is handed for each attempt it wraps."""
+
+    task_id: str
+    name: str
+    tries: int
+    args: tuple
+    kwargs: dict
+    headers: dict[str, Any]
+
+
 class ErrorContext(NamedTuple):
     """What an `@app.on_error` hook is handed when an attempt goes wrong.
 
