@@ -58,6 +58,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
+- **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
 - **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
 - **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
 - **Unique task names**, enforced at registration, so a duplicate raises instead of silently shadowing
@@ -336,6 +337,30 @@ try:
 except BrokerError:
     raise HTTPException(503, "queue unavailable")
 ```
+
+## Dead letter queue
+
+A task that fails for good (out of retries, or unknown to the worker) is kept
+in the dead letter queue with its arguments and error. It stays there, with no
+TTL, until you replay or delete it:
+
+```console
+$ ardiq dlq list myapp:app
+$ ardiq dlq replay myapp:app 3f2a9c...      # or --all
+$ ardiq dlq delete myapp:app 3f2a9c...
+```
+
+The same from Python:
+
+```python
+for dead in await app.dead_letters():
+    print(dead.task_id, dead.fn_name, dead.args, dead.error)
+
+job = await app.replay(dead.task_id)    # same id, fresh retry budget
+```
+
+A replay keeps the task's id, so a `Job` you already hold follows the rerun. An
+aborted task never lands there.
 
 ## Shared resources (lifespan)
 

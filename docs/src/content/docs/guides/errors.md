@@ -105,10 +105,13 @@ registration order. One that raises is logged and never changes the task's outco
 
 ```python
 @app.on_error
-async def to_dead_letter(ctx):
+async def page_on_call(ctx):
     if not ctx.will_retry:
-        await archive.insert(ctx.task_id, ctx.name, repr(ctx.exc))
+        await pager.alert(f"{ctx.name} failed for good: {ctx.exc!r}")
 ```
+
+A task that fails for good is also kept in the [dead letter queue](/guides/dead-letters/),
+with its arguments, so you can replay it once the cause is fixed.
 
 ### When it fires
 

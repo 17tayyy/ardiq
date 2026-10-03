@@ -91,6 +91,7 @@ export default defineConfig({
             { label: "Recurring tasks", slug: "guides/recurring" },
             { label: "Results & introspection", slug: "guides/results" },
             { label: "Handling failures", slug: "guides/errors" },
+            { label: "Dead letter queue", slug: "guides/dead-letters" },
             { label: "Aborting tasks", slug: "guides/aborting" },
             { label: "Shared resources", slug: "guides/lifespan" },
             { label: "Running a worker", slug: "guides/worker" },

@@ -97,6 +97,10 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 | `await status(task_id)` | `str` | `queued` / `scheduled` / `running` / `complete` / `not_found`. |
 | `await info(task_id)` | `TaskInfo \| None` | Snapshot of an unfinished task, else `None`. |
 | `await abort(task_id)` | `bool` | Cancel a queued or running task; `False` if already finished. |
+| `await dead_letters(limit=100)` | `list[DeadLetter]` | Tasks that failed for good, newest first; see [Dead letter queue](/guides/dead-letters/). |
+| `await dead_count()` | `int` | Number of tasks in the dead letter queue. |
+| `await replay(task_id)` | `Job \| None` | Enqueue a dead task again with the same id; `None` if it is not there. |
+| `await delete_dead(task_id)` | `bool` | Drop a dead task without running it; `False` if it is not there. |
 | `lifespan(fn)` | decorator | Register worker startup/shutdown; see [Shared resources](/guides/lifespan/). |
 | `on_error(fn)` | decorator | Register a failure hook; see [Handling failures](/guides/errors/). |
 | `state` | `State` | Worker-scoped resources set by the lifespan hook. |
@@ -218,6 +222,22 @@ A `NamedTuple` snapshot of an unfinished task (queued, scheduled, or running).
 | `tries` | `int` | Attempts so far. |
 | `status` | `str` | Current status. |
 | `scheduled_at` | `int \| None` | Epoch ms if waiting in the delayed set, else `None`. |
+
+## `DeadLetter`
+
+A `NamedTuple` for a task in the [dead letter queue](/guides/dead-letters/).
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `str` | The job id, kept by a replay. |
+| `fn_name` | `str` | Registered task name. |
+| `args` | `tuple` | Positional arguments. |
+| `kwargs` | `dict` | Keyword arguments. |
+| `priority` | `str` | The lane it ran in, and the one a replay uses. |
+| `error` | `str` | The failure, as its `TaskResult.value` reported it. |
+| `tries` | `int` | Attempts made before it gave up. |
+| `enqueue_time` | `int` | Epoch ms when enqueued. |
+| `failed_at` | `int` | Epoch ms when it failed for good. |
 
 ## `ErrorContext`
 

@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: The ardiq command-line interface for running workers.
+description: The ardiq command-line interface for running workers and managing the dead letter queue.
 ---
 
 The `ardiq` command comes with the base install — it pulls in no dependencies of its own,
@@ -73,6 +73,26 @@ another worker reclaims it after
 `--workers` is tested there; on Windows, one worker per service is the safer
 shape.
 :::
+
+## `ardiq dlq`
+
+Inspect and replay the tasks in the [dead letter queue](/guides/dead-letters/).
+
+```console
+$ ardiq dlq list MODULE:ATTR [--limit N]
+$ ardiq dlq replay MODULE:ATTR (ID... | --all)
+$ ardiq dlq delete MODULE:ATTR (ID... | --all)
+```
+
+| Command | Description |
+|---|---|
+| `list` | Print dead tasks, newest first: id, task, when it failed (UTC), tries and error. `--limit`/`-n` caps how many (default: 50). |
+| `replay` | Enqueue the given tasks again, with the same ids and a fresh retry budget. |
+| `delete` | Drop the given tasks without running them. |
+
+`replay` and `delete` take task ids or `--all`. With `--all`, a replay that fails again
+while the command runs stays in the queue for the next one. An id that is not in the
+dead letter queue is reported, and the command exits with status 1.
 
 ## Signals
 
