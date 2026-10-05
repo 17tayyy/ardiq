@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: The ardiq command-line interface for running workers and managing the dead letter queue.
+description: The ardiq command-line interface for running workers, managing the dead letter queue, and checking a deployment.
 ---
 
 The `ardiq` command comes with the base install — it pulls in no dependencies of its own,
@@ -93,6 +93,33 @@ $ ardiq dlq delete MODULE:ATTR (ID... | --all)
 `replay` and `delete` take task ids or `--all`. With `--all`, a replay that fails again
 while the command runs stays in the queue for the next one. An id that is not in the
 dead letter queue is reported, and the command exits with status 1.
+
+## `ardiq doctor`
+
+Check that an app can reach and use its Redis.
+
+```console
+$ ardiq doctor MODULE:ATTR [--json]
+ok    redis      redis://localhost:6379 (0.3 ms)
+ok    version    7.4.1
+ok    write      keys and Lua scripts allowed
+ok    lane high  0 queued, 0 delayed, 0 in flight
+ok    lane low   12 queued, 3 delayed, 4 in flight
+ok    workers    2 live: 1f3a9c2e running=4, 8b2d7e01 running=0
+```
+
+| Check | Fails or warns when |
+|---|---|
+| `redis` | Fails if Redis cannot be reached within 5 seconds. Warns if a round trip takes over 100 ms, because every task costs several. A password in the URL is shown as `***`. |
+| `version` | Fails below Redis 6.2, which added the `XAUTOCLAIM` that crash recovery relies on. |
+| `write` | Fails if the user may not write a key or run a Lua script, which is what a restrictive ACL usually breaks. The probe key is deleted straight away. |
+| `lane NAME` | One per priority, showing tasks queued, delayed and in flight. Warns if workers are alive but none of them reads this lane: they were started with different `priorities`, so tasks here wait forever. |
+| `workers` | Warns if no worker on this queue is alive. A worker shows up as soon as it starts and drops off when it stops cleanly, or one `idle_timeout_ms` after it dies. |
+
+The command exits with status 1 if any check fails; warnings alone exit with 0. Run it
+from a machine and environment where the app runs, since it uses the app's own
+`redis_url`, queue and priorities. `--json` prints `{"ok": ..., "checks": [{"name",
+"status", "detail"}, ...]}`.
 
 ## Signals
 

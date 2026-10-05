@@ -1,4 +1,4 @@
-"""Command-line interface: `ardiq run module:app` and `ardiq dlq ...`."""
+"""Command-line interface: `ardiq run module:app`, `ardiq dlq ...`, `ardiq doctor`."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import asyncio
 import atexit
 import contextlib
 import importlib
+import json
 import logging
 import os
 import signal
@@ -139,6 +140,14 @@ def build_parser() -> argparse.ArgumentParser:
         action.add_argument("app", help="App path, e.g. 'myapp:app'")
         action.add_argument("ids", nargs="*", metavar="ID", help="Task ids")
         action.add_argument("--all", action="store_true", help="Every dead task")
+
+    doctor = sub.add_parser(
+        "doctor",
+        help="Check that the app can reach and use its Redis",
+        description="Check that the app can reach and use its Redis",
+    )
+    doctor.add_argument("app", help="App path, e.g. 'myapp:app'")
+    doctor.add_argument("--json", action="store_true", help="Print the checks as JSON")
     return parser
 
 
@@ -271,6 +280,21 @@ async def _dlq_apply(app: Ardiq, action: str, ids: list[str], every: bool) -> in
     return missing
 
 
+def _doctor(args: argparse.Namespace) -> None:
+    from ardiq.doctor import diagnose
+
+    checks = asyncio.run(diagnose(import_string(args.app)))
+    healthy = all(c.status != "fail" for c in checks)
+    if args.json:
+        print(json.dumps({"ok": healthy, "checks": [c._asdict() for c in checks]}))
+    else:
+        width = max(len(c.name) for c in checks)
+        for c in checks:
+            print(f"{c.status:<4}  {c.name:<{width}}  {c.detail}")
+    if not healthy:
+        raise SystemExit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -279,6 +303,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
     if args.command == "dlq":
         _dlq(args)
+        return
+    if args.command == "doctor":
+        _doctor(args)
         return
     _run(args)
 

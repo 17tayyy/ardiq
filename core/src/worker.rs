@@ -322,12 +322,9 @@ impl Worker {
         drained: CancellationToken,
     ) {
         let interval = Duration::from_millis(((self.config.idle_timeout_ms as f64) * 0.9) as u64);
+        // Beat first: a worker that waits out the interval stays invisible to
+        // `ardiq doctor` for most of a minute after it starts.
         loop {
-            tokio::select! {
-                _ = drained.cancelled() => break,
-                _ = tokio::time::sleep(interval) => {}
-            }
-
             let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
             for (priority, message_id) in state.in_flight.lock().await.values() {
                 grouped
@@ -352,6 +349,14 @@ impl Worker {
             {
                 tracing::warn!("ardiq heartbeat failed: {err}");
             }
+
+            tokio::select! {
+                _ = drained.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {}
+            }
+        }
+        if let Err(err) = self.queue.retire(&mut conn, &self.config.worker_id).await {
+            tracing::warn!("ardiq could not clear its heartbeat: {err}");
         }
     }
 }

@@ -59,6 +59,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
 - **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
+- **`ardiq doctor`**: checks Redis reachability, version and permissions, every lane, and which workers are alive
 - **Middleware** (`@app.middleware`) around every attempt, plus **headers** from producer to worker (`@app.on_enqueue`), for tracing and metrics
 - **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
 - **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
@@ -155,7 +156,7 @@ That's everything — the library, the `ardiq` worker command, and a **single ru
 dependency** (`msgpack`). Define tasks, enqueue them, and run a worker either from
 the CLI or from your own code (`await app.run()`).
 
-You also need a Redis server — the quickest way is Docker:
+You also need a Redis server, 6.2 or newer. The quickest way is Docker:
 
 ```console
 $ docker run -d --name ardiq-redis -p 6379:6379 redis
@@ -387,6 +388,25 @@ job = await app.replay(dead.task_id)    # same id, fresh retry budget
 
 A replay keeps the task's id, so a `Job` you already hold follows the rerun. An
 aborted task never lands there.
+
+## Checking a deployment
+
+`ardiq doctor` checks that an app can reach and use its Redis: the connection
+and its latency, the server version, that it may write keys and run Lua, each
+lane, and which workers are alive. It exits with status 1 if anything fails, so
+it works as a deploy step or a readiness probe:
+
+```console
+$ ardiq doctor myapp:app
+ok    redis      redis://localhost:6379 (0.3 ms)
+ok    version    7.4.1
+ok    write      keys and Lua scripts allowed
+ok    lane high  0 queued, 0 delayed, 0 in flight
+ok    lane low   12 queued, 3 delayed, 4 in flight
+ok    workers    2 live: 1f3a9c2e running=4, 8b2d7e01 running=0
+```
+
+`--json` prints the same checks for scripts.
 
 ## Shared resources (lifespan)
 

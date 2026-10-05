@@ -2,7 +2,7 @@ mod queue;
 mod worker;
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use pyo3::create_exception;
@@ -12,6 +12,7 @@ use pyo3::types::{PyBytes, PyDict};
 use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::TaskLocals;
 use redis::aio::ConnectionManager;
+use redis::{AsyncConnectionConfig, RedisResult};
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
@@ -546,6 +547,43 @@ impl ArdiqCore {
         })
     }
 
+    /// Facts for `ardiq doctor`. A section that fails reports `<name>_error`.
+    fn doctor<'py>(&self, py: Python<'py>, timeout_ms: u64) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let client = self.client.clone();
+        let token = self.config.worker_id.clone();
+        future_into_py(py, async move {
+            let timeout = Some(Duration::from_millis(timeout_ms));
+            let config = AsyncConnectionConfig::new()
+                .set_connection_timeout(timeout)
+                .set_response_timeout(timeout);
+            let mut conn = client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await
+                .map_err(to_py_err)?;
+            let started = Instant::now();
+            redis::cmd("PING")
+                .query_async::<()>(&mut conn)
+                .await
+                .map_err(to_py_err)?;
+            let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+            let version = queue.server_version(&mut conn).await;
+            let lanes = queue.lanes(&mut conn).await;
+            let workers = queue.live_workers(&mut conn).await;
+            let write = queue.probe_write(&mut conn, &token).await;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                let facts = PyDict::new(py);
+                facts.set_item("latency_ms", latency_ms)?;
+                put(&facts, "version", version)?;
+                put(&facts, "lanes", lanes)?;
+                put(&facts, "workers", workers)?;
+                put(&facts, "write", write)?;
+                Ok(facts.into_any().unbind())
+            })
+        })
+    }
+
     #[getter]
     fn worker_id(&self) -> &str {
         &self.config.worker_id
@@ -628,6 +666,17 @@ async fn shared_conn(
         .await
         .map_err(to_py_err)?;
     Ok(conn.clone())
+}
+
+fn put<'py, T: IntoPyObject<'py>>(
+    facts: &Bound<'py, PyDict>,
+    key: &str,
+    value: RedisResult<T>,
+) -> PyResult<()> {
+    match value {
+        Ok(value) => facts.set_item(key, value),
+        Err(err) => facts.set_item(format!("{key}_error"), err.to_string()),
+    }
 }
 
 fn opt<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {

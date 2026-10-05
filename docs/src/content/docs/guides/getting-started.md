@@ -6,7 +6,7 @@ description: Install ArdiQ, start Redis, write your first task, and run a worker
 ## Requirements
 
 - **Python 3.12+** (3.13+ recommended — see the note below)
-- A **Redis** server (ArdiQ uses Redis streams as its broker and result store).
+- A **Redis** server, 6.2 or newer (ArdiQ uses Redis streams as its broker and result store).
 
 :::caution[On Python 3.12, a process that enqueues can crash as it exits]
 ArdiQ's core keeps Rust threads that outlive your code. When CPython 3.12 tears

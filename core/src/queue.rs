@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::aio::ConnectionLike;
-use redis::streams::{StreamAutoClaimReply, StreamReadReply};
+use redis::streams::{StreamAutoClaimReply, StreamInfoGroupsReply, StreamReadReply};
 use redis::{RedisResult, Script};
 
 const GROUP: &str = "workers";
@@ -19,6 +19,7 @@ pub struct StagedTask {
 
 type DeadFields = (Option<Vec<u8>>, Option<Vec<u8>>, Option<String>);
 pub type DeadEntry = (String, Vec<u8>, Vec<u8>, String, i64);
+pub type LaneHealth = (String, i64, i64, Option<(i64, i64)>);
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -713,6 +714,107 @@ impl Queue {
         Ok(counts.iter().sum())
     }
 
+    pub async fn retire<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        worker_id: &str,
+    ) -> RedisResult<()> {
+        redis::cmd("DEL")
+            .arg(self.health_key(worker_id))
+            .query_async(conn)
+            .await
+    }
+
+    pub async fn server_version<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<String> {
+        let info: String = redis::cmd("INFO").arg("server").query_async(conn).await?;
+        Ok(info
+            .lines()
+            .find_map(|line| line.strip_prefix("redis_version:"))
+            .unwrap_or("")
+            .trim()
+            .to_string())
+    }
+
+    /// Per lane: (priority, stream length, delayed count, group as (consumers, pending)).
+    pub async fn lanes<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<Vec<LaneHealth>> {
+        let mut lanes = Vec::with_capacity(self.priorities.len());
+        for priority in &self.priorities {
+            let stream = self.stream_key(priority);
+            let (length, delayed): (i64, i64) = redis::pipe()
+                .cmd("XLEN")
+                .arg(&stream)
+                .cmd("ZCARD")
+                .arg(self.delayed_key(priority))
+                .query_async(conn)
+                .await?;
+            let groups: RedisResult<StreamInfoGroupsReply> = redis::cmd("XINFO")
+                .arg("GROUPS")
+                .arg(&stream)
+                .query_async(conn)
+                .await;
+            let group = match groups {
+                Ok(reply) => reply
+                    .groups
+                    .into_iter()
+                    .find(|g| g.name == GROUP)
+                    .map(|g| (g.consumers as i64, g.pending as i64)),
+                // No stream yet: nothing was enqueued and no worker started.
+                Err(err) if err.to_string().contains("no such key") => None,
+                Err(err) => return Err(err),
+            };
+            lanes.push((priority.clone(), length, delayed, group));
+        }
+        Ok(lanes)
+    }
+
+    /// Status lines of the workers whose heartbeat has not expired.
+    pub async fn live_workers<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<Vec<String>> {
+        let pattern = format!("{}:health:*", glob_escape(&self.prefix));
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(500)
+                .query_async(conn)
+                .await?;
+            keys.extend(batch);
+            if next == 0 {
+                break;
+            }
+            cursor = next;
+        }
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let statuses: Vec<Option<String>> = redis::cmd("MGET").arg(&keys).query_async(conn).await?;
+        // A key can expire between the SCAN and the MGET.
+        Ok(statuses.into_iter().flatten().collect())
+    }
+
+    /// Write a key and delete it from Lua: the two things a restrictive ACL breaks.
+    pub async fn probe_write<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        token: &str,
+    ) -> RedisResult<()> {
+        let key = format!("{}:doctor:{token}", self.prefix);
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(1)
+            .arg("PX")
+            .arg(10_000)
+            .query_async::<()>(conn)
+            .await?;
+        Script::new("return redis.call('DEL', KEYS[1])")
+            .key(&key)
+            .invoke_async::<()>(conn)
+            .await
+    }
+
     pub async fn fetch_result<C: ConnectionLike>(
         &self,
         conn: &mut C,
@@ -790,6 +892,17 @@ impl Queue {
         let scheduled = self.scheduled_at(conn, task_id).await?.unwrap_or(0);
         Ok((payload, tries, scheduled))
     }
+}
+
+fn glob_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '*' | '?' | '[' | ']' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 fn parse_entry(priority: &str, entry: &redis::streams::StreamId) -> Option<StreamMessage> {
