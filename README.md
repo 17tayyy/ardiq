@@ -553,8 +553,8 @@ After changing the Rust core, rebuild with `uv sync --reinstall-package ardiq`.
 
 ArdiQ is young, and that is the good part: the decisions that shape a task queue
 are still open, and the person who hits a rough edge first gets to decide how it
-gets fixed. Two of this month's releases came straight out of somebody porting a
-live Celery app over and writing down what hurt.
+gets fixed. Several releases came straight out of somebody porting a live Celery
+app over and writing down what hurt.
 
 **The most useful thing you can do is use it and tell us what broke.** After
 that: bug reports, docs fixes, and features are all welcome — see
@@ -563,9 +563,10 @@ what to open an issue about first. Questions, ideas and "is this supposed to
 work like this?" go in
 [Discussions](https://github.com/17tayyy/ardiq/discussions).
 
-If you want something bigger to sink your teeth into, `unique` task locks and
-multiprocess workers (`--workers N`) are the two things standing between ArdiQ
-and 1.0.
+If you want something bigger to sink your teeth into, 1.2 is about the things
+only a Rust scheduler can do: weighted fair scheduling across priority lanes, so
+a busy lane can no longer starve the others, and metrics straight from the core
+(queue depth, latency, retries, worker liveness) with a Prometheus endpoint.
 
 ## License
 
