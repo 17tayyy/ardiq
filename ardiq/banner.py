@@ -89,6 +89,13 @@ def _box_chars(file: TextIO) -> tuple[str, ...]:
     return _BOX_UNICODE
 
 
+def _format_lanes(app: Ardiq) -> str:
+    weights = app.weights
+    if weights is None:
+        return ", ".join(app.priorities)
+    return ", ".join(f"{lane} ({weight})" for lane, weight in weights.items())
+
+
 def _rows(
     app: Ardiq, *, app_path: str, burst: bool, workers: int
 ) -> list[tuple[str, str]]:
@@ -98,7 +105,7 @@ def _rows(
         ("workers", str(workers)) if workers > 1 else ("worker", app.worker_id),
         ("redis", _safe_redis_url(app.redis_url)),
         ("queue", app.queue_name),
-        ("priorities", ", ".join(app.priorities)),
+        ("priorities", _format_lanes(app)),
         ("concurrency", str(app.concurrency)),
         ("prefetch", str(app.prefetch)),
         ("mode", "burst" if burst else "continuous"),

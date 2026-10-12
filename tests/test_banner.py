@@ -156,3 +156,11 @@ print(",".join(heavy))
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "", f"CLI path imported: {out.stdout.strip()}"
+
+
+def test_startup_banner_shows_lane_weights(make_app):
+    app = make_app(
+        "banner-weights", priorities=["low", "high"], weights={"low": 1, "high": 4}
+    )
+
+    assert "low (1), high (4)" in render(app)

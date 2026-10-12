@@ -78,6 +78,7 @@ class Ardiq:
         worker_id: str | None = None,
         *,
         default_priority: str | None = None,
+        weights: dict[str, int] | None = None,
         serializer: Callable[[Any], bytes] | None = None,
         deserializer: Callable[[bytes], Any] | None = None,
         cron_poll_s: float = 1.0,
@@ -103,6 +104,7 @@ class Ardiq:
             "redis_url": redis_url,
             "queue_name": queue_name,
             "priorities": priorities,
+            "weights": weights,
             "worker_id": worker_id,
             **core_kwargs,
         }
@@ -151,6 +153,14 @@ class Ardiq:
     def priorities(self) -> list[str]:
         """Configured priorities, in the order passed (lowest priority first)."""
         return self._core.priorities
+
+    @property
+    def weights(self) -> dict[str, int] | None:
+        """Lane weights, lowest lane first, or None when lanes drain strictly."""
+        weights = self._core.weights
+        if weights is None:
+            return None
+        return {lane: weights[lane] for lane in self.priorities}
 
     @property
     def concurrency(self) -> int:

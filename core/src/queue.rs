@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::aio::ConnectionLike;
@@ -55,6 +56,8 @@ impl ResultTtl {
 
 pub struct Queue {
     priorities: Vec<String>,
+    weights: Option<Vec<i64>>,
+    credit: Mutex<Vec<i64>>,
     prefix: String,
     stream_to_priority: HashMap<String, String>,
     publish_task: Script,
@@ -65,7 +68,7 @@ pub struct Queue {
 }
 
 impl Queue {
-    pub fn new(queue_name: &str, priorities: Vec<String>) -> Self {
+    pub fn new(queue_name: &str, priorities: Vec<String>, weights: Option<Vec<i64>>) -> Self {
         let prefix = format!("ardiq:{queue_name}");
         let priorities = if priorities.is_empty() {
             vec!["default".to_string()]
@@ -78,7 +81,9 @@ impl Queue {
             .collect();
 
         Queue {
+            credit: Mutex::new(vec![0; priorities.len()]),
             priorities,
+            weights,
             prefix,
             stream_to_priority,
             publish_task: Script::new(include_str!("scripts/publish_task.lua")),
@@ -236,55 +241,139 @@ impl Queue {
         idle_ms: i64,
     ) -> RedisResult<Vec<StreamMessage>> {
         let mut out = Vec::new();
+        let Some(weights) = &self.weights else {
+            for priority in &self.priorities {
+                if count <= 0 {
+                    break;
+                }
+                count -= self
+                    .claim(conn, consumer, priority, count, idle_ms, &mut out)
+                    .await?;
+                if count <= 0 {
+                    break;
+                }
+                count -= self
+                    .read_new(conn, consumer, priority, count, &mut out)
+                    .await?;
+            }
+            return Ok(out);
+        };
+
         for priority in &self.priorities {
             if count <= 0 {
                 break;
             }
-            let stream = self.stream_key(priority);
-
-            let claim: StreamAutoClaimReply = redis::cmd("XAUTOCLAIM")
-                .arg(&stream)
-                .arg(GROUP)
-                .arg(consumer)
-                .arg(idle_ms)
-                .arg("0-0")
-                .arg("COUNT")
-                .arg(count)
-                .query_async(conn)
+            count -= self
+                .claim(conn, consumer, priority, count, idle_ms, &mut out)
                 .await?;
-            for entry in claim.claimed {
-                if let Some(msg) = parse_entry(priority, &entry) {
-                    out.push(msg);
-                    count -= 1;
-                }
-            }
-            if count <= 0 {
-                break;
-            }
+        }
+        if count <= 0 {
+            return Ok(out);
+        }
 
-            let read: Option<StreamReadReply> = redis::cmd("XREADGROUP")
-                .arg("GROUP")
-                .arg(GROUP)
-                .arg(consumer)
-                .arg("COUNT")
-                .arg(count)
-                .arg("STREAMS")
-                .arg(&stream)
-                .arg(">")
-                .query_async(conn)
-                .await?;
-            if let Some(read) = read {
-                for key in read.keys {
-                    for entry in key.ids {
-                        if let Some(msg) = parse_entry(priority, &entry) {
-                            out.push(msg);
-                            count -= 1;
-                        }
-                    }
-                }
+        let mut spare = 0;
+        let mut open = Vec::new();
+        for (priority, share) in self.priorities.iter().zip(self.shares(weights, count)) {
+            let read = if share > 0 {
+                self.read_new(conn, consumer, priority, share, &mut out)
+                    .await?
+            } else {
+                0
+            };
+            spare += share - read;
+            if read == share {
+                open.push(priority);
             }
         }
+        // A lane that came up short is empty: its share goes to the rest, highest first.
+        for priority in open {
+            if spare <= 0 {
+                break;
+            }
+            spare -= self
+                .read_new(conn, consumer, priority, spare, &mut out)
+                .await?;
+        }
         Ok(out)
+    }
+
+    // Smooth weighted round robin: splits `count` reads across lanes.
+    fn shares(&self, weights: &[i64], count: i64) -> Vec<i64> {
+        let total: i64 = weights.iter().sum();
+        let mut credit = self.credit.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut shares = vec![0; weights.len()];
+        for _ in 0..count {
+            for (c, w) in credit.iter_mut().zip(weights) {
+                *c += w;
+            }
+            // rev(): a tie goes to the higher lane.
+            let lane = (0..weights.len())
+                .rev()
+                .max_by_key(|&i| credit[i])
+                .expect("priorities is never empty");
+            credit[lane] -= total;
+            shares[lane] += 1;
+        }
+        shares
+    }
+
+    async fn claim<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        consumer: &str,
+        priority: &str,
+        count: i64,
+        idle_ms: i64,
+        out: &mut Vec<StreamMessage>,
+    ) -> RedisResult<i64> {
+        let claim: StreamAutoClaimReply = redis::cmd("XAUTOCLAIM")
+            .arg(self.stream_key(priority))
+            .arg(GROUP)
+            .arg(consumer)
+            .arg(idle_ms)
+            .arg("0-0")
+            .arg("COUNT")
+            .arg(count)
+            .query_async(conn)
+            .await?;
+        let before = out.len();
+        out.extend(
+            claim
+                .claimed
+                .iter()
+                .filter_map(|entry| parse_entry(priority, entry)),
+        );
+        Ok((out.len() - before) as i64)
+    }
+
+    async fn read_new<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        consumer: &str,
+        priority: &str,
+        count: i64,
+        out: &mut Vec<StreamMessage>,
+    ) -> RedisResult<i64> {
+        let read: Option<StreamReadReply> = redis::cmd("XREADGROUP")
+            .arg("GROUP")
+            .arg(GROUP)
+            .arg(consumer)
+            .arg("COUNT")
+            .arg(count)
+            .arg("STREAMS")
+            .arg(self.stream_key(priority))
+            .arg(">")
+            .query_async(conn)
+            .await?;
+        let before = out.len();
+        for key in read.into_iter().flat_map(|read| read.keys) {
+            out.extend(
+                key.ids
+                    .iter()
+                    .filter_map(|entry| parse_entry(priority, entry)),
+            );
+        }
+        Ok((out.len() - before) as i64)
     }
 
     pub async fn read_blocking<C: ConnectionLike>(

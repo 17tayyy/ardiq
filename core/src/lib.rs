@@ -1,12 +1,13 @@
 mod queue;
 mod worker;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use pyo3::create_exception;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -111,6 +112,8 @@ struct ArdiqCore {
     queue_name: String,
     #[pyo3(get)]
     priorities: Vec<String>,
+    #[pyo3(get)]
+    weights: Option<HashMap<String, i64>>,
     queue: Arc<Queue>,
     config: WorkerConfig,
     cancel: CancellationToken,
@@ -135,6 +138,12 @@ impl ArdiqCore {
             .transpose()?
             .unwrap_or_else(|| vec!["default".to_string()]);
         let queue_priorities: Vec<String> = priorities.iter().rev().cloned().collect();
+        let weights: Option<HashMap<String, i64>> =
+            opt(&config, "weights")?.map(|v| v.extract()).transpose()?;
+        let queue_weights = weights
+            .as_ref()
+            .map(|w| lane_weights(&priorities, w))
+            .transpose()?;
 
         let concurrency: usize = opt(&config, "concurrency")?
             .map(|v| v.extract())
@@ -167,7 +176,7 @@ impl ArdiqCore {
             .unwrap_or_else(default_worker_id);
 
         let client = redis::Client::open(redis_url.as_str()).map_err(to_py_err)?;
-        let queue = Arc::new(Queue::new(&queue_name, queue_priorities));
+        let queue = Arc::new(Queue::new(&queue_name, queue_priorities, queue_weights));
         let worker_config = WorkerConfig {
             worker_id,
             concurrency,
@@ -183,6 +192,7 @@ impl ArdiqCore {
             redis_url,
             queue_name,
             priorities,
+            weights,
             queue,
             config: worker_config,
             cancel: CancellationToken::new(),
@@ -681,6 +691,28 @@ fn put<'py, T: IntoPyObject<'py>>(
 
 fn opt<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(dict.get_item(key)?.filter(|value| !value.is_none()))
+}
+
+fn lane_weights(priorities: &[String], weights: &HashMap<String, i64>) -> PyResult<Vec<i64>> {
+    if let Some(name) = weights.keys().find(|name| !priorities.contains(name)) {
+        return Err(PyValueError::new_err(format!(
+            "weights names lane {name:?}, which is not one of {priorities:?}"
+        )));
+    }
+    // Highest lane first, the order the queue reads in.
+    priorities
+        .iter()
+        .rev()
+        .map(|lane| match weights.get(lane) {
+            Some(&weight) if weight > 0 => Ok(weight),
+            Some(&weight) => Err(PyValueError::new_err(format!(
+                "weight for lane {lane:?} must be positive, got {weight}"
+            ))),
+            None => Err(PyValueError::new_err(format!(
+                "weights has no entry for lane {lane:?}"
+            ))),
+        })
+        .collect()
 }
 
 fn default_worker_id() -> String {

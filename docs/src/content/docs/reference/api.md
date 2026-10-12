@@ -18,7 +18,10 @@ Ardiq(
     redis_url: str | None = None,
     queue_name: str = "default",
     priorities: list[str] | None = None,
+    worker_id: str | None = None,
     *,
+    default_priority: str | None = None,
+    weights: dict[str, int] | None = None,
     serializer: Callable[[Any], bytes] | None = None,
     deserializer: Callable[[bytes], Any] | None = None,
     cron_poll_s: float = 1.0,
@@ -36,6 +39,7 @@ Constructor arguments are documented in [Configuration](/reference/configuration
 |---|---|---|
 | `worker_id` | `str` | This worker's id (set by the core). |
 | `default_priority` | `str` | The lane a task with no `priority` lands in. |
+| `weights` | `dict[str, int] \| None` | Lane weights, lowest lane first, or `None` when lanes drain strictly. |
 | `burst` | `bool` | Read/write; when `True` the loop exits once the queue drains. |
 | `tasks` | `list[str]` | Names of the registered tasks. |
 

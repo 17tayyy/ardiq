@@ -227,7 +227,8 @@ await report.options(priority="low").enqueue()    # batch work
 await alert.options(priority="high").enqueue()     # jump the queue
 ```
 
-See [Defining tasks](/guides/tasks/#priorities) for setting a task's default lane.
+See [Defining tasks](/guides/tasks/#priorities) for setting a task's default lane. To stop
+a busy `high` from starving `low`, give the lanes [`weights`](/reference/configuration/#weights).
 
 ## Reading the result
 

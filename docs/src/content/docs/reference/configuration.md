@@ -25,6 +25,7 @@ app = Ardiq(
 | `queue_name` | `"default"` | Logical queue — namespaces all Redis keys for this app. |
 | `priorities` | `["default"]` | Priority lane names, **lowest-first**. Higher lanes drain first. |
 | `default_priority` | the middle lane | Where a task with no `priority` goes. Must be one of `priorities`. |
+| `weights` | `None` | Lane name to weight. Lanes share pickups by weight instead of draining highest-first. |
 | `concurrency` | `16` | Max tasks running at once in a worker. |
 | `prefetch` | `concurrency * 2` | Max tasks held in memory; drives backpressure against Redis. |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed by another worker. |
@@ -35,8 +36,8 @@ app = Ardiq(
 | `cron_poll_s` | `1.0` | Seconds between re-checks of each `@app.cron`'s next fire time. |
 
 :::note
-`redis_url`, `queue_name`, and `priorities` are positional-or-keyword; `serializer`,
-`deserializer` and `cron_poll_s` are keyword-only. The remaining options (`concurrency`, `prefetch`,
+`redis_url`, `queue_name`, and `priorities` are positional-or-keyword; `default_priority`,
+`weights`, `serializer`, `deserializer` and `cron_poll_s` are keyword-only. The remaining options (`concurrency`, `prefetch`,
 `idle_timeout_ms`, `result_ttl_ms`, `burst`) are forwarded to the Rust core as keyword
 arguments.
 :::
@@ -58,6 +59,26 @@ The list is **lowest-priority first**. With `["low", "default", "high"]`, a work
 
 Any priority naming a lane outside this list raises a `ValueError` — see
 [Priorities](/guides/tasks/#priorities).
+
+### `weights`
+
+By default lanes drain strictly: while `high` has work, `low` waits, however long that
+takes. `weights` makes the lanes share the worker instead:
+
+```python
+app = Ardiq(
+    priorities=["low", "default", "high"],
+    weights={"low": 5, "default": 15, "high": 80},
+)
+```
+
+While every lane has work, 80 of each 100 tasks a worker picks up come from `high`, 15
+from `default` and 5 from `low`, interleaved rather than in runs. A lane with nothing
+waiting hands its share to the others, highest first, so weights never leave a worker
+idle while work is queued. Tasks reclaimed from a dead worker still go first.
+
+Every lane needs a positive integer weight; a missing, unknown or non-positive entry raises
+a `ValueError`. `app.weights` reads them back, lowest lane first.
 
 ### `concurrency` and `prefetch`
 

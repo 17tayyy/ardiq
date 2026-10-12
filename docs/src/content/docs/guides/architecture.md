@@ -31,8 +31,10 @@ Stage by stage:
    tasks per invocation.
 
 2. **Pickup.** Each worker runs a producer task that polls the streams in priority order,
-   highest first. Every poll issues `XAUTOCLAIM` before `XREADGROUP`, so work stranded by a
-   dead worker is preferred over fresh work. When nothing is waiting, it falls back to a
+   highest first. With `weights`, each poll instead splits its reads across the lanes by
+   smooth weighted round robin, and a lane that comes up short passes its share on. Every
+   poll issues `XAUTOCLAIM` before `XREADGROUP`, so work stranded by a dead worker is
+   preferred over fresh work. When nothing is waiting, it falls back to a
    blocking `XREADGROUP` across all lanes rather than spinning.
 
 3. **Dispatch.** Messages cross a bounded channel to the consumer tasks, one per concurrency

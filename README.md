@@ -53,7 +53,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 ## Features
 
 - 🦀 **Rust core**: the loop and Redis I/O run on tokio, off the GIL
-- **Priority queues**: higher-priority tasks are consumed first
+- **Priority queues**: higher-priority tasks are consumed first, or lanes share the worker by weight so a busy one cannot starve the rest
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
 - **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
@@ -519,6 +519,7 @@ back with no backoff, and delays and schedules are ignored.
 | `redis_url` | `redis://localhost:6379` | Redis connection URL |
 | `queue_name` | `"default"` | Logical queue (key namespace) |
 | `priorities` | `["default"]` | Priority names, **lowest-first** |
+| `weights` | `None` | Lane name to weight, e.g. `{"low": 1, "high": 4}`; lanes share pickups by weight instead of draining highest-first |
 | `concurrency` | `16` | Max tasks running at once |
 | `prefetch` | `concurrency * 2` | Max tasks held in memory (drives backpressure) |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed |
@@ -584,9 +585,9 @@ work like this?" go in
 [Discussions](https://github.com/17tayyy/ardiq/discussions).
 
 If you want something bigger to sink your teeth into, 1.2 is about the things
-only a Rust scheduler can do: weighted fair scheduling across priority lanes, so
-a busy lane can no longer starve the others, and metrics straight from the core
-(queue depth, latency, retries, worker liveness) with a Prometheus endpoint.
+only a Rust scheduler can do. Weighted fair scheduling across lanes is in; next
+are metrics straight from the core (queue depth, latency, retries, worker
+liveness) with a Prometheus endpoint.
 
 ## License
 
