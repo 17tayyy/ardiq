@@ -35,7 +35,8 @@ Stage by stage:
    smooth weighted round robin, and a lane that comes up short passes its share on. Every
    poll issues `XAUTOCLAIM` before `XREADGROUP`, so work stranded by a dead worker is
    preferred over fresh work. When nothing is waiting, it falls back to a
-   blocking `XREADGROUP` across all lanes rather than spinning.
+   blocking `XREADGROUP` across all lanes rather than spinning. That read takes one task
+   per lane to wake up, and hands back any it has no room for.
 
 3. **Dispatch.** Messages cross a bounded channel to the consumer tasks, one per concurrency
    slot. The consumer increments the attempt counter, adds the task to the running set, and

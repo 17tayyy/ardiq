@@ -110,3 +110,44 @@ async def test_burst_drains_due_task(redis, make_app):
     assert ran == ["due"]
     res = await job.result()
     assert res is not None and res.success
+
+
+async def test_waking_up_holds_no_more_than_prefetch(redis, make_app, poll):
+    # An idle worker blocks on every lane at once, and Redis applies COUNT to
+    # each stream: a batch landing in three lanes used to hand it three tasks.
+    lanes = ["low", "default", "high"]
+    app = make_app(
+        "wake", priorities=lanes, concurrency=1, prefetch=1, poll_block_ms=1000
+    )
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    order: list[str] = []
+
+    @app.task()
+    async def hold(lane):
+        order.append(lane)
+        started.set()
+        await finish.wait()
+
+    run = asyncio.ensure_future(app.run())
+    try:
+        await asyncio.sleep(0.3)
+        jobs = await app.enqueue_many(
+            hold.options(priority=lane).prepare(lane) for lane in lanes
+        )
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        held = [
+            (await redis.xpending(f"ardiq:wake:queues:{lane}", "workers"))["pending"]
+            for lane in lanes
+        ]
+        assert sum(held) == 1
+
+        finish.set()
+        for job in jobs:
+            assert await poll(lambda job=job: _complete(app, job.id))
+        assert order == ["high", "default", "low"]
+    finally:
+        finish.set()
+        app.stop()
+        await asyncio.wait_for(run, timeout=15)

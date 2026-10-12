@@ -383,13 +383,15 @@ impl Queue {
         count: i64,
         block_ms: i64,
     ) -> RedisResult<Vec<StreamMessage>> {
+        // COUNT applies per stream, so take one per lane to wake up and leave
+        // the rest to read_batch, which honors priorities and weights.
         let mut command = redis::cmd("XREADGROUP");
         command
             .arg("GROUP")
             .arg(GROUP)
             .arg(consumer)
             .arg("COUNT")
-            .arg(count)
+            .arg(1)
             .arg("BLOCK")
             .arg(block_ms)
             .arg("STREAMS");
@@ -414,6 +416,13 @@ impl Queue {
                     }
                 }
             }
+        }
+        // More lanes woke than there are free slots: keep the highest, hand back the rest.
+        let count = count.max(0) as usize;
+        if out.len() > count {
+            out.sort_by_key(|msg| self.priorities.iter().position(|p| *p == msg.priority));
+            let extra = out.split_off(count);
+            self.release(conn, &extra).await?;
         }
         Ok(out)
     }
