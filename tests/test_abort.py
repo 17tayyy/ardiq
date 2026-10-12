@@ -19,9 +19,9 @@ async def test_aborted_at_pickup_skips_the_task(make_app, caplog):
         ran.append(1)
 
     with caplog.at_level(logging.INFO, logger="ardiq"):
-        outcome, env, _ = await app._execute("t1", _pack(app, "work"), 1, True)
+        outcome, env, _, _ = await app._execute("t1", _pack(app, "work"), 1, True)
 
-    assert outcome == 1  # FAILURE
+    assert outcome == 4  # ABORT
     assert not ran  # never invoked
     result = app._unpack(env)
     assert result is not None and result.aborted and not result.success
@@ -32,9 +32,9 @@ async def test_aborted_at_pickup_wins_over_unknown_task(make_app):
     """An abort should not surface as a spurious 'unknown task' error."""
     app = make_app("abort_unknown")
 
-    outcome, env, _ = await app._execute("t2", _pack(app, "gone"), 1, True)
+    outcome, env, _, _ = await app._execute("t2", _pack(app, "gone"), 1, True)
 
-    assert outcome == 1
+    assert outcome == 4
     result = app._unpack(env)
     assert result is not None and result.aborted
 
@@ -53,9 +53,9 @@ async def test_cancelling_in_flight_task_reports_aborted(make_app, caplog):
         await asyncio.wait_for(started.wait(), timeout=5)
         assert "t3" in app._running  # registered while in flight
         app._running["t3"].cancel()
-        outcome, env, _ = await asyncio.wait_for(run, timeout=5)
+        outcome, env, _, _ = await asyncio.wait_for(run, timeout=5)
 
-    assert outcome == 1
+    assert outcome == 4
     result = app._unpack(env)
     assert result is not None and result.aborted
     assert any(r.message.startswith("task aborted") for r in caplog.records)
@@ -69,7 +69,7 @@ async def test_successful_task_is_deregistered(make_app):
     async def quick():
         return "ok"
 
-    outcome, _, _ = await app._execute("t4", _pack(app, "quick"), 1)
+    outcome, _, _, _ = await app._execute("t4", _pack(app, "quick"), 1)
 
     assert outcome == 0  # SUCCESS
     assert app._running == {}

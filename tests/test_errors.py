@@ -107,7 +107,7 @@ async def test_a_hook_that_raises_is_logged_and_ignored(make_app, caplog):
         raise ValueError("original")
 
     with caplog.at_level(logging.ERROR, logger="ardiq"):
-        outcome, env, _ = await app._execute("t1", _pack(app, "boom"), 1)
+        outcome, env, _, _ = await app._execute("t1", _pack(app, "boom"), 1)
 
     assert outcome == 3  # DEAD, unchanged
     result = app._unpack(env)
@@ -168,9 +168,9 @@ async def test_hook_does_not_fire_when_a_running_task_is_cancelled(make_app):
     run = asyncio.ensure_future(app._execute("t1", _pack(app, "slow"), 1))
     await asyncio.wait_for(started.wait(), timeout=5)
     app._running["t1"].cancel()
-    outcome, _, _ = await asyncio.wait_for(run, timeout=5)
+    outcome, _, _, _ = await asyncio.wait_for(run, timeout=5)
 
-    assert outcome == 1
+    assert outcome == 4
     assert seen == []
 
 

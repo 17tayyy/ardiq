@@ -84,7 +84,7 @@ async def test_manual_retry_picks_its_own_delay(make_app):
     async def rate_limited():
         raise Retry("slow down", delay_ms=250)
 
-    outcome, _, retry_ms = await app._execute("t1", _pack(app, "rate_limited"), 1)
+    outcome, _, retry_ms, _ = await app._execute("t1", _pack(app, "rate_limited"), 1)
 
     assert outcome == 2  # RETRY
     assert retry_ms == 250  # the task's delay beats the task's backoff_ms
@@ -97,7 +97,7 @@ async def test_manual_retry_falls_back_to_the_configured_backoff(make_app):
     async def again():
         raise Retry()
 
-    outcome, _, retry_ms = await app._execute("t1", _pack(app, "again"), 1)
+    outcome, _, retry_ms, _ = await app._execute("t1", _pack(app, "again"), 1)
 
     assert outcome == 2
     assert retry_ms == 5000
@@ -115,8 +115,8 @@ async def test_manual_retry_respects_max_retries(make_app):
     async def forever():
         raise Retry("still not ready")
 
-    first, _, _ = await app._execute("t1", _pack(app, "forever"), 1)
-    last, env, _ = await app._execute("t1", _pack(app, "forever"), 2)
+    first, _, _, _ = await app._execute("t1", _pack(app, "forever"), 1)
+    last, env, _, _ = await app._execute("t1", _pack(app, "forever"), 2)
 
     assert first == 2  # RETRY
     assert last == 3  # DEAD, the budget is not infinite

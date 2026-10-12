@@ -60,6 +60,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
 - **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
 - **`ardiq doctor`**: checks Redis reachability, version and permissions, every lane, and which workers are alive
+- **Metrics from the core** (`app.metrics()`): outcomes plus run and wait time per task and lane, with no instrumentation in your tasks
 - **Middleware** (`@app.middleware`) around every attempt, plus **headers** from producer to worker (`@app.on_enqueue`), for tracing and metrics
 - **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
 - **Typed failures** (`BrokerError`): catch "Redis is down" without a blanket `except`
@@ -408,6 +409,22 @@ ok    workers    2 live: 1f3a9c2e running=4, 8b2d7e01 running=0
 
 `--json` prints the same checks for scripts.
 
+## Metrics
+
+The core times every attempt, so a worker knows how each task is doing without
+instrumenting it. `app.metrics()` returns one `TaskMetrics` per task and lane,
+counted in this process since it started:
+
+```python
+for m in app.metrics():
+    print(m.fn_name, m.priority, m.succeeded, m.retried, m.failed, m.aborted)
+    print(m.run.sum / m.run.count)    # mean seconds per attempt
+    print(m.wait.sum / m.wait.count)  # mean seconds ready before pickup
+```
+
+`run` and `wait` are histograms with Prometheus-style cumulative buckets. `wait`
+counts from when a task became ready, so a delayed task does not look slow.
+
 ## Shared resources (lifespan)
 
 Tasks often need something expensive that should be built once per worker, not
@@ -585,9 +602,9 @@ work like this?" go in
 [Discussions](https://github.com/17tayyy/ardiq/discussions).
 
 If you want something bigger to sink your teeth into, 1.2 is about the things
-only a Rust scheduler can do. Weighted fair scheduling across lanes is in; next
-are metrics straight from the core (queue depth, latency, retries, worker
-liveness) with a Prometheus endpoint.
+only a Rust scheduler can do. Weighted fair scheduling across lanes and
+per-task metrics from the core are in; next are `ardiq workers`, `ardiq queues`
+and a Prometheus endpoint.
 
 ## License
 

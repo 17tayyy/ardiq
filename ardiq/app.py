@@ -33,16 +33,19 @@ from ardiq.models import (
     EnqueueContext,
     ErrorContext,
     ExecutionContext,
+    Histogram,
     State,
     TaskContext,
     TaskInfo,
+    TaskMetrics,
     TaskResult,
 )
 from ardiq.tasks import Job, PreparedTask, Task
 
 # Outcome codes for the Rust core's executor protocol. DEAD is a failure the
-# core also keeps in the dead letter queue.
-SUCCESS, FAILURE, RETRY, DEAD = 0, 1, 2, 3
+# core also keeps in the dead letter queue; ABORT finishes like FAILURE but is
+# counted apart in the metrics.
+SUCCESS, FAILURE, RETRY, DEAD, ABORT = 0, 1, 2, 3, 4
 DEFAULT_MAX_RETRIES = 3
 
 ErrorHook = Callable[[ErrorContext], Any]
@@ -56,6 +59,11 @@ logger = logging.getLogger("ardiq")
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _histogram(raw: tuple[list[tuple[float, int]], float, int]) -> Histogram:
+    buckets, total, count = raw
+    return Histogram(tuple(buckets), total, count)
 
 
 @dataclass(slots=True)
@@ -560,8 +568,8 @@ class Ardiq:
 
     async def _execute(
         self, task_id: str, payload: bytes, tries: int, aborted: bool = False
-    ) -> tuple[int, bytes, int]:
-        """The core's per-task callback. Returns (outcome, result_bytes, retry_ms)."""
+    ) -> tuple[int, bytes, int, str]:
+        """The core's per-task callback. Returns (outcome, result_bytes, retry_ms, fn_name)."""
         data = self._loads(payload)
         task_name = data["f"]
         worker_id = self.worker_id
@@ -574,7 +582,7 @@ class Ardiq:
                 f"try={tries} duration_ms=0"
             )
             env = self._envelope(False, ABORTED, tries, enqueue_time, start)
-            return FAILURE, env, 0
+            return ABORT, env, 0, task_name
 
         reg = self._registry.get(task_name)
         if reg is None:
@@ -588,7 +596,7 @@ class Ardiq:
                 ErrorContext(task_name, task_id, LookupError(err), tries, False)
             )
             env = self._envelope(False, err, tries, enqueue_time, start)
-            return DEAD, env, 0
+            return DEAD, env, 0, task_name
 
         logger.debug(
             f"task started id={task_id} name={task_name!r} worker={worker_id} try={tries}"
@@ -634,7 +642,7 @@ class Ardiq:
                 f"try={tries} duration_ms={duration_ms}"
             )
             env = self._envelope(False, ABORTED, tries, enqueue_time, start)
-            return FAILURE, env, 0
+            return ABORT, env, 0, task_name
         except Exception as exc:
             error = exc
         finally:
@@ -667,7 +675,7 @@ class Ardiq:
                     await self._fire_error_hooks(
                         ErrorContext(task_name, task_id, error, tries, True)
                     )
-                return RETRY, b"", retry_ms  # 0 = core's default backoff
+                return RETRY, b"", retry_ms, task_name  # 0 = core's default backoff
 
             logger.error(
                 f"task failed id={task_id} name={task_name!r} worker={worker_id} "
@@ -676,13 +684,15 @@ class Ardiq:
             await self._fire_error_hooks(
                 ErrorContext(task_name, task_id, error, tries, False)
             )
-            return DEAD, self._envelope(False, err, tries, enqueue_time, start), 0
+            env = self._envelope(False, err, tries, enqueue_time, start)
+            return DEAD, env, 0, task_name
 
         logger.debug(
             f"task succeeded id={task_id} name={task_name!r} worker={worker_id} "
             f"try={tries} duration_ms={duration_ms}"
         )
-        return SUCCESS, self._envelope(True, result, tries, enqueue_time, start), 0
+        env = self._envelope(True, result, tries, enqueue_time, start)
+        return SUCCESS, env, 0, task_name
 
     async def run(self) -> None:
         """Run the worker loop until `stop()` (or the queue drains, in burst mode)."""
@@ -708,6 +718,24 @@ class Ardiq:
     def stop(self) -> None:
         """Signal the worker loop to shut down."""
         self._core.stop()
+
+    def metrics(self) -> list[TaskMetrics]:
+        """Outcomes and timings per task and lane, counted in this process."""
+        return [
+            TaskMetrics(
+                fn_name,
+                priority,
+                succeeded,
+                retried,
+                failed,
+                aborted,
+                _histogram(run),
+                _histogram(wait),
+            )
+            for fn_name, priority, succeeded, retried, failed, aborted, run, wait in (
+                self._core.metrics()
+            )
+        ]
 
     async def queue_size(self) -> int:
         """Number of tasks waiting in the queue (live streams + delayed)."""

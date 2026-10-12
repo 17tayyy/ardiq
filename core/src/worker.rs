@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
 use redis::aio::{ConnectionManager, MultiplexedConnection};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
+use crate::metrics::Metrics;
 use crate::queue::{now_ms, Queue, ResultTtl, StreamMessage};
 
 #[derive(Debug)]
@@ -19,12 +20,14 @@ pub enum Outcome {
     Retry {
         delay_ms: Option<i64>,
     },
+    Aborted,
 }
 
 #[derive(Debug)]
 pub struct ExecOutcome {
     pub outcome: Outcome,
     pub result: Vec<u8>,
+    pub fn_name: String,
 }
 
 #[async_trait::async_trait]
@@ -52,6 +55,7 @@ pub struct WorkerConfig {
 #[derive(Clone)]
 pub struct Worker {
     queue: Arc<Queue>,
+    metrics: Arc<Metrics>,
     executor: Arc<dyn TaskExecutor>,
     client: redis::Client,
     config: WorkerConfig,
@@ -69,12 +73,14 @@ impl Worker {
     pub fn new(
         client: redis::Client,
         queue: Arc<Queue>,
+        metrics: Arc<Metrics>,
         config: WorkerConfig,
         executor: Arc<dyn TaskExecutor>,
         cancel: CancellationToken,
     ) -> Self {
         Worker {
             queue,
+            metrics,
             executor,
             client,
             config,
@@ -257,6 +263,7 @@ impl Worker {
 
     async fn run_task(&self, msg: StreamMessage, state: &RunState, conn: &mut ConnectionManager) {
         let task_id = msg.task_id.clone();
+        let picked_ms = now_ms();
 
         let tries = match self.queue.incr_retry(conn, &task_id).await {
             Ok(n) => n,
@@ -273,7 +280,7 @@ impl Worker {
             (msg.priority.clone(), msg.message_id.clone()),
         );
 
-        if let Err(err) = self.execute_and_finish(&msg, tries, conn).await {
+        if let Err(err) = self.execute_and_finish(&msg, tries, picked_ms, conn).await {
             tracing::error!("ardiq failed to finalize {task_id}: {err}");
         }
 
@@ -284,6 +291,7 @@ impl Worker {
         &self,
         msg: &StreamMessage,
         tries: i64,
+        picked_ms: i64,
         conn: &mut ConnectionManager,
     ) -> redis::RedisResult<()> {
         let (payload, aborted) = self.queue.fetch_payload(conn, &msg.task_id).await?;
@@ -295,13 +303,24 @@ impl Worker {
             }
         };
 
+        let started = Instant::now();
         let exec = self
             .executor
             .execute(msg.task_id.clone(), &payload, tries, aborted)
             .await;
+        // Ready since enqueue_time (its due time if it was delayed), on the enqueuer's clock.
+        let wait_secs =
+            (msg.enqueue_time > 0).then(|| (picked_ms - msg.enqueue_time).max(0) as f64 / 1000.0);
+        self.metrics.record(
+            &exec.fn_name,
+            &msg.priority,
+            &exec.outcome,
+            started.elapsed().as_secs_f64(),
+            wait_secs,
+        );
 
         match exec.outcome {
-            Outcome::Success | Outcome::Failure | Outcome::Dead => {
+            Outcome::Success | Outcome::Failure | Outcome::Dead | Outcome::Aborted => {
                 let ttl = ResultTtl::from_ms(self.config.result_ttl_ms);
                 let dead = matches!(exec.outcome, Outcome::Dead).then_some(payload.as_slice());
                 self.queue

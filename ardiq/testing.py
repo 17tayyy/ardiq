@@ -66,7 +66,7 @@ class _InlineCore:
         try:
             while True:
                 self._running[task_id] = (payload, tries)
-                outcome, env, _ = await self._app._execute(task_id, payload, tries)
+                outcome, env, *_ = await self._app._execute(task_id, payload, tries)
                 if outcome != RETRY:
                     self._results[task_id] = env
                     if outcome == DEAD:

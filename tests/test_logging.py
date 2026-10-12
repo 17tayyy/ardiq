@@ -16,7 +16,7 @@ async def test_task_started_and_succeeded_are_debug(make_app, caplog):
         return a + b
 
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
-        outcome, _, _ = await app._execute("t1", _pack(app, "add", (1, 2)), 1)
+        outcome, _, _, _ = await app._execute("t1", _pack(app, "add", (1, 2)), 1)
 
     assert outcome == 0  # SUCCESS
     records = {r.message: r for r in caplog.records if r.name == "ardiq"}
@@ -36,7 +36,7 @@ async def test_task_retry_scheduled_is_warning(make_app, caplog):
         raise ValueError("boom")
 
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
-        outcome, _, _ = await app._execute("t2", _pack(app, "boom"), 1)
+        outcome, _, _, _ = await app._execute("t2", _pack(app, "boom"), 1)
 
     assert outcome == 2  # RETRY
     record = next(r for r in caplog.records if r.message.startswith("task retry"))
@@ -52,7 +52,7 @@ async def test_task_failed_terminal_is_error(make_app, caplog):
         raise ValueError("boom")
 
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
-        outcome, _, _ = await app._execute("t3", _pack(app, "boom"), 1)
+        outcome, _, _, _ = await app._execute("t3", _pack(app, "boom"), 1)
 
     assert outcome == 3  # DEAD
     record = next(r for r in caplog.records if r.message.startswith("task failed"))
@@ -64,7 +64,7 @@ async def test_unknown_task_is_error(make_app, caplog):
     app = make_app("log_unknown")
 
     with caplog.at_level(logging.DEBUG, logger="ardiq"):
-        outcome, _, _ = await app._execute("t4", _pack(app, "does_not_exist"), 1)
+        outcome, _, _, _ = await app._execute("t4", _pack(app, "does_not_exist"), 1)
 
     assert outcome == 3  # DEAD
     record = next(r for r in caplog.records if r.message.startswith("task unknown"))

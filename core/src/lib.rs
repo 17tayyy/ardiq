@@ -1,3 +1,4 @@
+mod metrics;
 mod queue;
 mod worker;
 
@@ -17,6 +18,7 @@ use redis::{AsyncConnectionConfig, RedisResult};
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
+use crate::metrics::{Metrics, TaskSnapshot};
 use crate::queue::{now_ms, DeadEntry, Queue, ResultTtl, StagedTask};
 use crate::worker::{ExecOutcome, Outcome, TaskExecutor, Worker, WorkerConfig};
 
@@ -85,21 +87,32 @@ fn parse_outcome(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ExecOutcome> {
     let code: i64 = bound.get_item(0)?.extract()?;
     let result: Vec<u8> = bound.get_item(1)?.extract()?;
     let retry_after_ms: i64 = bound.get_item(2)?.extract()?;
+    // Optional, so an executor returning three items still works.
+    let fn_name: String = bound
+        .get_item(3)
+        .and_then(|v| v.extract())
+        .unwrap_or_default();
     let outcome = match code {
         0 => Outcome::Success,
         3 => Outcome::Dead,
+        4 => Outcome::Aborted,
         2 => Outcome::Retry {
             delay_ms: (retry_after_ms > 0).then_some(retry_after_ms),
         },
         _ => Outcome::Failure,
     };
-    Ok(ExecOutcome { outcome, result })
+    Ok(ExecOutcome {
+        outcome,
+        result,
+        fn_name,
+    })
 }
 
 fn failure() -> ExecOutcome {
     ExecOutcome {
         outcome: Outcome::Failure,
         result: Vec::new(),
+        fn_name: String::new(),
     }
 }
 
@@ -115,6 +128,7 @@ struct ArdiqCore {
     #[pyo3(get)]
     weights: Option<HashMap<String, i64>>,
     queue: Arc<Queue>,
+    metrics: Arc<Metrics>,
     config: WorkerConfig,
     cancel: CancellationToken,
     conn: Arc<OnceCell<ConnectionManager>>,
@@ -194,6 +208,7 @@ impl ArdiqCore {
             priorities,
             weights,
             queue,
+            metrics: Arc::new(Metrics::default()),
             config: worker_config,
             cancel: CancellationToken::new(),
             conn: Arc::new(OnceCell::new()),
@@ -302,6 +317,7 @@ impl ArdiqCore {
         let worker = Worker::new(
             self.client.clone(),
             self.queue.clone(),
+            self.metrics.clone(),
             self.config.clone(),
             executor,
             self.cancel.clone(),
@@ -314,6 +330,10 @@ impl ArdiqCore {
 
     fn stop(&self) {
         self.cancel.cancel();
+    }
+
+    fn metrics(&self) -> Vec<TaskSnapshot> {
+        self.metrics.snapshot()
     }
 
     #[getter]

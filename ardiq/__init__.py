@@ -16,9 +16,11 @@ from ardiq.models import (
     EnqueueContext,
     ErrorContext,
     ExecutionContext,
+    Histogram,
     State,
     TaskContext,
     TaskInfo,
+    TaskMetrics,
     TaskResult,
 )
 from ardiq.tasks import Job, PreparedTask, Task
@@ -31,6 +33,7 @@ __all__ = [
     "EnqueueContext",
     "ErrorContext",
     "ExecutionContext",
+    "Histogram",
     "Job",
     "PreparedTask",
     "Retry",
@@ -38,6 +41,7 @@ __all__ = [
     "Task",
     "TaskContext",
     "TaskInfo",
+    "TaskMetrics",
     "TaskResult",
     "current_task",
 ]

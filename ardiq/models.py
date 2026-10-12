@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
@@ -119,3 +120,30 @@ class DeadLetter(NamedTuple):
     tries: int
     enqueue_time: int
     failed_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Histogram:
+    """Observations in seconds. Each bucket pairs an upper bound with how many fell at or under it."""
+
+    buckets: tuple[tuple[float, int], ...]
+    sum: float
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskMetrics:
+    """One task in one lane, as this process has run it since it started.
+
+    `run` times each attempt; `wait` is how long it sat ready before a worker
+    picked it up.
+    """
+
+    fn_name: str
+    priority: str
+    succeeded: int
+    retried: int
+    failed: int
+    aborted: int
+    run: Histogram
+    wait: Histogram

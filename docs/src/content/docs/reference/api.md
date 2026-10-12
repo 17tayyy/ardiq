@@ -94,6 +94,7 @@ Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds 
 |---|---|---|
 | `await run()` | `None` | Start the worker loop; runs until `stop()` or (in burst) the queue drains. |
 | `stop()` | `None` | Ask the loop to shut down gracefully. |
+| `metrics()` | `list[TaskMetrics]` | Outcomes and timings per task and lane, counted in this process; see [Metrics](/guides/metrics/). |
 | `await send(name, *args, **kwargs)` | `Job` | Enqueue by name, with no local registration; see [Enqueuing by name](/guides/enqueuing/#enqueuing-by-name). |
 | `ref(name, *, priority=None, unique=False)` | `Task` | A handle to a task registered elsewhere — enqueueable, not callable. |
 | `await queue_size()` | `int` | Number of jobs waiting across lanes. |
@@ -244,6 +245,32 @@ A `NamedTuple` for a task in the [dead letter queue](/guides/dead-letters/).
 | `tries` | `int` | Attempts made before it gave up. |
 | `enqueue_time` | `int` | Epoch ms when enqueued. |
 | `failed_at` | `int` | Epoch ms when it failed for good. |
+
+## `TaskMetrics`
+
+A frozen dataclass, one per task and lane, returned by `app.metrics()`. Counts start at
+zero when the process starts. See [Metrics](/guides/metrics/).
+
+| Field | Type | Description |
+|---|---|---|
+| `fn_name` | `str` | Registered task name. |
+| `priority` | `str` | The lane it ran in. |
+| `succeeded` | `int` | Attempts that returned. |
+| `retried` | `int` | Attempts that failed with retries left, or raised `Retry`. |
+| `failed` | `int` | Attempts that failed for good. |
+| `aborted` | `int` | Attempts cancelled by an abort. |
+| `run` | `Histogram` | Seconds each attempt took. |
+| `wait` | `Histogram` | Seconds each attempt sat ready before a worker picked it up. |
+
+## `Histogram`
+
+A frozen dataclass of observations in seconds.
+
+| Field | Type | Description |
+|---|---|---|
+| `buckets` | `tuple[tuple[float, int], ...]` | Each upper bound with how many fell at or under it (cumulative). |
+| `sum` | `float` | Total of all observations. |
+| `count` | `int` | Number of observations, including any above the last bound. |
 
 ## `ExecutionContext`
 

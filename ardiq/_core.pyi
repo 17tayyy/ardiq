@@ -5,7 +5,13 @@ from typing import Any
 
 # (task_id, payload, result, priority, failed_at_ms)
 DeadEntry = tuple[str, bytes, bytes, str, int]
-Executor = Callable[[str, bytes, int, bool], Awaitable[tuple[int, bytes, int]]]
+# (task_id, payload, tries, aborted) -> (outcome, result, retry_ms[, fn_name])
+Executor = Callable[
+    [str, bytes, int, bool],
+    Awaitable[tuple[int, bytes, int] | tuple[int, bytes, int, str]],
+]
+# (bucket bounds with cumulative counts, sum in seconds, count)
+RawHistogram = tuple[list[tuple[float, int]], float, int]
 
 class ArdiqError(RuntimeError):
     """Base class for the errors ArdiQ's core raises."""
@@ -55,6 +61,9 @@ class ArdiqCore:
     ) -> Awaitable[list[bool]]: ...
     def run(self, callback: Executor) -> Awaitable[None]: ...
     def stop(self) -> None: ...
+    def metrics(
+        self,
+    ) -> list[tuple[str, str, int, int, int, int, RawHistogram, RawHistogram]]: ...
     def queue_size(self) -> Awaitable[int]: ...
     def result(self, task_id: str) -> Awaitable[bytes | None]: ...  # core: no timeout
     def await_result(
