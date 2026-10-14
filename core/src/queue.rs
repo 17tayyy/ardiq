@@ -114,6 +114,14 @@ impl Queue {
         }
     }
 
+    /// Where a lane sits in the read order, highest first.
+    pub fn lane_index(&self, priority: &str) -> usize {
+        self.priorities
+            .iter()
+            .position(|p| p == priority)
+            .unwrap_or(0)
+    }
+
     pub fn default_priority(&self) -> &str {
         self.priorities.last().expect("priorities is never empty")
     }
@@ -256,39 +264,53 @@ impl Queue {
         Ok(moved)
     }
 
+    /// Read up to `count` tasks, and no more from a lane than its `room`
+    /// (highest lane first, as `priorities`).
     pub async fn read_batch<C: ConnectionLike>(
         &self,
         conn: &mut C,
         consumer: &str,
         mut count: i64,
         idle_ms: i64,
+        room: &[i64],
     ) -> RedisResult<Vec<StreamMessage>> {
         let mut out = Vec::new();
+        let mut room = room.to_vec();
         let Some(weights) = &self.weights else {
-            for priority in &self.priorities {
+            for (lane, priority) in self.priorities.iter().enumerate() {
                 if count <= 0 {
                     break;
                 }
-                count -= self
-                    .claim(conn, consumer, priority, count, idle_ms, &mut out)
-                    .await?;
-                if count <= 0 {
-                    break;
+                let take = count.min(room[lane]);
+                if take <= 0 {
+                    continue;
                 }
-                count -= self
-                    .read_new(conn, consumer, priority, count, &mut out)
+                let mut got = self
+                    .claim(conn, consumer, priority, take, idle_ms, &mut out)
                     .await?;
+                if got < take {
+                    got += self
+                        .read_new(conn, consumer, priority, take - got, &mut out)
+                        .await?;
+                }
+                count -= got;
             }
             return Ok(out);
         };
 
-        for priority in &self.priorities {
+        for (lane, priority) in self.priorities.iter().enumerate() {
             if count <= 0 {
                 break;
             }
-            count -= self
-                .claim(conn, consumer, priority, count, idle_ms, &mut out)
+            let take = count.min(room[lane]);
+            if take <= 0 {
+                continue;
+            }
+            let got = self
+                .claim(conn, consumer, priority, take, idle_ms, &mut out)
                 .await?;
+            room[lane] -= got;
+            count -= got;
         }
         if count <= 0 {
             return Ok(out);
@@ -296,25 +318,29 @@ impl Queue {
 
         let mut spare = 0;
         let mut open = Vec::new();
-        for (priority, share) in self.priorities.iter().zip(self.shares(weights, count)) {
-            let read = if share > 0 {
-                self.read_new(conn, consumer, priority, share, &mut out)
+        for (lane, share) in self.shares(weights, count).into_iter().enumerate() {
+            let ask = share.min(room[lane]);
+            let read = if ask > 0 {
+                self.read_new(conn, consumer, &self.priorities[lane], ask, &mut out)
                     .await?
             } else {
                 0
             };
+            room[lane] -= read;
             spare += share - read;
-            if read == share {
-                open.push(priority);
+            if read == ask && room[lane] > 0 {
+                open.push(lane);
             }
         }
-        // A lane that came up short is empty: its share goes to the rest, highest first.
-        for priority in open {
+        // A lane that came up short is empty, and a full one is at its limit:
+        // their share goes to the rest, highest first.
+        for lane in open {
             if spare <= 0 {
                 break;
             }
+            let ask = spare.min(room[lane]);
             spare -= self
-                .read_new(conn, consumer, priority, spare, &mut out)
+                .read_new(conn, consumer, &self.priorities[lane], ask, &mut out)
                 .await?;
         }
         Ok(out)
@@ -405,7 +431,19 @@ impl Queue {
         consumer: &str,
         count: i64,
         block_ms: i64,
+        room: &[i64],
     ) -> RedisResult<Vec<StreamMessage>> {
+        // A lane at its limit is left out until a task of it finishes.
+        let lanes: Vec<&String> = self
+            .priorities
+            .iter()
+            .zip(room)
+            .filter(|(_, &room)| room > 0)
+            .map(|(priority, _)| priority)
+            .collect();
+        if lanes.is_empty() {
+            return Ok(Vec::new());
+        }
         // COUNT applies per stream, so take one per lane to wake up and leave
         // the rest to read_batch, which honors priorities and weights.
         let mut command = redis::cmd("XREADGROUP");
@@ -418,10 +456,10 @@ impl Queue {
             .arg("BLOCK")
             .arg(block_ms)
             .arg("STREAMS");
-        for priority in &self.priorities {
+        for priority in &lanes {
             command.arg(self.stream_key(priority));
         }
-        for _ in &self.priorities {
+        for _ in &lanes {
             command.arg(">");
         }
 

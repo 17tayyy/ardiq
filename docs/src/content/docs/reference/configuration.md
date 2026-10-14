@@ -26,6 +26,7 @@ app = Ardiq(
 | `priorities` | `["default"]` | Priority lane names, **lowest-first**. Higher lanes drain first. |
 | `default_priority` | the middle lane | Where a task with no `priority` goes. Must be one of `priorities`. |
 | `weights` | `None` | Lane name to weight. Lanes share pickups by weight instead of draining highest-first. |
+| `limits` | `None` | Lane name to the most tasks a worker holds from it at once. Lanes left out are limited only by `concurrency`. |
 | `concurrency` | `16` | Max tasks running at once in a worker. |
 | `prefetch` | `concurrency * 2`, or `concurrency` with several lanes | Max tasks held in memory; drives backpressure against Redis. |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed by another worker. |
@@ -37,7 +38,7 @@ app = Ardiq(
 
 :::note
 `redis_url`, `queue_name`, and `priorities` are positional-or-keyword; `default_priority`,
-`weights`, `serializer`, `deserializer` and `cron_poll_s` are keyword-only. The remaining options (`concurrency`, `prefetch`,
+`weights`, `limits`, `serializer`, `deserializer` and `cron_poll_s` are keyword-only. The remaining options (`concurrency`, `prefetch`,
 `idle_timeout_ms`, `result_ttl_ms`, `burst`) are forwarded to the Rust core as keyword
 arguments.
 :::
@@ -79,6 +80,36 @@ idle while work is queued. Tasks reclaimed from a dead worker still go first.
 
 Every lane needs a positive integer weight; a missing, unknown or non-positive entry raises
 a `ValueError`. `app.weights` reads them back, lowest lane first.
+
+### `limits`
+
+`concurrency` caps a worker as a whole. `limits` caps one lane within it, so a heavy task
+can run one at a time while light tasks keep running beside it:
+
+```python
+app = Ardiq(
+    priorities=["heavy", "default"],
+    concurrency=4,
+    limits={"heavy": 1},
+)
+
+
+@app.task(priority="heavy")
+def process_scene(scene_id: str) -> dict:
+    ...  # ~1 GB of RAM: two at once would not fit
+```
+
+A worker holds at most one `heavy` task at a time, running or prefetched, and the other
+three slots go to `default`. Give heavy tasks a lane of their own with `priority=`, and the
+limit covers every task in it.
+
+A lane at its limit is not read at all, so the tasks waiting in it stay in Redis for any
+worker with room, and they never sit in this worker's memory ahead of the lane's limit.
+The limit is per worker process, like `concurrency`: with `ardiq run --workers 2`, each
+process holds up to its own limit.
+
+A lane left out has no limit beyond `concurrency`. An unknown lane or a limit below 1
+raises a `ValueError`. `app.limits` reads them back, lowest lane first.
 
 ### `concurrency` and `prefetch`
 

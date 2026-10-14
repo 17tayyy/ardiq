@@ -52,6 +52,8 @@ pub struct WorkerConfig {
     pub burst: bool,
     /// What the heartbeat says about this worker; the app fills it in.
     pub info: Option<String>,
+    /// Most tasks held at once per lane, highest lane first; i64::MAX = no limit.
+    pub limits: Vec<i64>,
 }
 
 #[derive(Clone)]
@@ -67,6 +69,8 @@ pub struct Worker {
 #[derive(Clone)]
 struct RunState {
     permits: Arc<AtomicI64>,
+    /// Tasks read and not finished, per lane: prefetched or running.
+    held: Arc<Vec<AtomicI64>>,
     permit_freed: Arc<Notify>,
     in_flight: Arc<Mutex<HashMap<String, (String, String)>>>,
 }
@@ -110,6 +114,13 @@ impl Worker {
 
         let state = RunState {
             permits: Arc::new(AtomicI64::new(self.config.prefetch)),
+            held: Arc::new(
+                self.config
+                    .limits
+                    .iter()
+                    .map(|_| AtomicI64::new(0))
+                    .collect(),
+            ),
             permit_freed: Arc::new(Notify::new()),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -198,18 +209,40 @@ impl Worker {
         let worker_id = &self.config.worker_id;
         while !self.cancel.is_cancelled() {
             let count = state.permits.load(Ordering::Acquire).max(0);
-            let read_attempted = count > 0;
+            let room: Vec<i64> = self
+                .config
+                .limits
+                .iter()
+                .zip(state.held.iter())
+                .map(|(limit, held)| (limit - held.load(Ordering::Acquire)).max(0))
+                .collect();
+            let read_attempted = count > 0 && room.iter().any(|&r| r > 0);
+            // Burst may only stop after a read that looked at every lane: a lane
+            // skipped at its limit can free up while the others come back empty.
+            let read_every_lane = count > 0 && room.iter().all(|&r| r > 0);
 
             let mut messages = Vec::new();
-            if count > 0 {
+            if read_attempted {
                 messages = self
                     .queue
-                    .read_batch(&mut conn, worker_id, count, self.config.idle_timeout_ms)
+                    .read_batch(
+                        &mut conn,
+                        worker_id,
+                        count,
+                        self.config.idle_timeout_ms,
+                        &room,
+                    )
                     .await?;
                 if messages.is_empty() {
                     messages = self
                         .queue
-                        .read_blocking(&mut conn, worker_id, count, self.config.poll_block_ms)
+                        .read_blocking(
+                            &mut conn,
+                            worker_id,
+                            count,
+                            self.config.poll_block_ms,
+                            &room,
+                        )
                         .await?;
                 }
             } else {
@@ -222,6 +255,7 @@ impl Worker {
 
             for msg in &messages {
                 state.permits.fetch_sub(1, Ordering::AcqRel);
+                state.held[self.queue.lane_index(&msg.priority)].fetch_add(1, Ordering::AcqRel);
                 if tx.send(msg.clone()).await.is_err() {
                     return Ok(());
                 }
@@ -230,7 +264,7 @@ impl Worker {
             let promoted = self.queue.publish_delayed(&mut conn, now_ms()).await?;
 
             if self.config.burst
-                && read_attempted
+                && read_every_lane
                 && messages.is_empty()
                 && promoted == 0
                 && state.permits.load(Ordering::Acquire) >= self.config.prefetch
@@ -257,7 +291,9 @@ impl Worker {
                     Err(_) => break,
                 },
             };
+            let lane = self.queue.lane_index(&msg.priority);
             self.run_task(msg, &state, &mut conn).await;
+            state.held[lane].fetch_sub(1, Ordering::AcqRel);
             state.permits.fetch_add(1, Ordering::AcqRel); // free a slot for the producer
             state.permit_freed.notify_one();
         }

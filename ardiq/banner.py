@@ -108,6 +108,12 @@ def _rows(
         ("priorities", _format_lanes(app)),
         ("concurrency", str(app.concurrency)),
         ("prefetch", str(app.prefetch)),
+    ]
+    if app.limits:
+        rows.append(
+            ("limits", ", ".join(f"{lane} {n}" for lane, n in app.limits.items()))
+        )
+    rows += [
         ("mode", "burst" if burst else "continuous"),
         ("tasks", _format_list(app.tasks)),
     ]

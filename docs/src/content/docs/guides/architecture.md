@@ -32,7 +32,9 @@ Stage by stage:
 
 2. **Pickup.** Each worker runs a producer task that polls the streams in priority order,
    highest first. With `weights`, each poll instead splits its reads across the lanes by
-   smooth weighted round robin, and a lane that comes up short passes its share on. Every
+   smooth weighted round robin, and a lane that comes up short passes its share on. A lane
+   with a [limit](/reference/configuration/#limits) is read only while the worker holds
+   fewer of its tasks than that, and left out of the poll otherwise. Every
    poll issues `XAUTOCLAIM` before `XREADGROUP`, so work stranded by a dead worker is
    preferred over fresh work. When nothing is waiting, it falls back to a
    blocking `XREADGROUP` across all lanes rather than spinning. That read takes one task

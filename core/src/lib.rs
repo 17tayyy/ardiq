@@ -127,6 +127,8 @@ struct ArdiqCore {
     priorities: Vec<String>,
     #[pyo3(get)]
     weights: Option<HashMap<String, i64>>,
+    #[pyo3(get)]
+    limits: Option<HashMap<String, i64>>,
     queue: Arc<Queue>,
     metrics: Arc<Metrics>,
     config: WorkerConfig,
@@ -158,6 +160,12 @@ impl ArdiqCore {
             .as_ref()
             .map(|w| lane_weights(&priorities, w))
             .transpose()?;
+        let limits: Option<HashMap<String, i64>> =
+            opt(&config, "limits")?.map(|v| v.extract()).transpose()?;
+        let lane_caps = match &limits {
+            Some(limits) => lane_limits(&priorities, limits)?,
+            None => vec![i64::MAX; priorities.len()],
+        };
 
         let concurrency: usize = opt(&config, "concurrency")?
             .map(|v| v.extract())
@@ -207,6 +215,7 @@ impl ArdiqCore {
             result_ttl_ms,
             burst,
             info: None,
+            limits: lane_caps,
         };
 
         Ok(ArdiqCore {
@@ -215,6 +224,7 @@ impl ArdiqCore {
             queue_name,
             priorities,
             weights,
+            limits,
             queue,
             metrics: Arc::new(Metrics::default()),
             config: worker_config,
@@ -816,6 +826,26 @@ fn lane_weights(priorities: &[String], weights: &HashMap<String, i64>) -> PyResu
             None => Err(PyValueError::new_err(format!(
                 "weights has no entry for lane {lane:?}"
             ))),
+        })
+        .collect()
+}
+
+fn lane_limits(priorities: &[String], limits: &HashMap<String, i64>) -> PyResult<Vec<i64>> {
+    if let Some(name) = limits.keys().find(|name| !priorities.contains(name)) {
+        return Err(PyValueError::new_err(format!(
+            "limits names lane {name:?}, which is not one of {priorities:?}"
+        )));
+    }
+    // Highest lane first, the order the queue reads in. A lane left out has none.
+    priorities
+        .iter()
+        .rev()
+        .map(|lane| match limits.get(lane) {
+            Some(&limit) if limit > 0 => Ok(limit),
+            Some(&limit) => Err(PyValueError::new_err(format!(
+                "limit for lane {lane:?} must be positive, got {limit}"
+            ))),
+            None => Ok(i64::MAX),
         })
         .collect()
 }

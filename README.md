@@ -53,7 +53,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 ## Features
 
 - 🦀 **Rust core**: the loop and Redis I/O run on tokio, off the GIL
-- **Priority queues**: higher-priority tasks are consumed first, or lanes share the worker by weight so a busy one cannot starve the rest
+- **Priority queues**: higher-priority tasks are consumed first, or lanes share the worker by weight so a busy one cannot starve the rest; a lane can be capped, so one heavy task runs at a time beside the light ones
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
 - **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC or a time zone) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
@@ -557,6 +557,7 @@ back with no backoff, and delays and schedules are ignored.
 | `queue_name` | `"default"` | Logical queue (key namespace) |
 | `priorities` | `["default"]` | Priority names, **lowest-first** |
 | `weights` | `None` | Lane name to weight, e.g. `{"low": 1, "high": 4}`; lanes share pickups by weight instead of draining highest-first |
+| `limits` | `None` | Lane name to the most tasks a worker holds from it at once, e.g. `{"heavy": 1}`; one heavy task at a time while the rest of `concurrency` serves the other lanes |
 | `concurrency` | `16` | Max tasks running at once |
 | `prefetch` | `concurrency * 2` (`concurrency` with several lanes) | Max tasks held in memory (drives backpressure) |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed |

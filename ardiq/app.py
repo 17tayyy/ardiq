@@ -97,6 +97,7 @@ class Ardiq:
         *,
         default_priority: str | None = None,
         weights: dict[str, int] | None = None,
+        limits: dict[str, int] | None = None,
         serializer: Callable[[Any], bytes] | None = None,
         deserializer: Callable[[bytes], Any] | None = None,
         cron_poll_s: float = 1.0,
@@ -123,6 +124,7 @@ class Ardiq:
             "queue_name": queue_name,
             "priorities": priorities,
             "weights": weights,
+            "limits": limits,
             "worker_id": worker_id,
             **core_kwargs,
         }
@@ -179,6 +181,13 @@ class Ardiq:
         if weights is None:
             return None
         return {lane: weights[lane] for lane in self.priorities}
+
+    @property
+    def limits(self) -> dict[str, int]:
+        """Most tasks a worker holds at once per lane, lowest lane first. Lanes
+        left out have no limit beyond `concurrency`."""
+        limits = self._core.limits or {}
+        return {lane: limits[lane] for lane in self.priorities if lane in limits}
 
     @property
     def concurrency(self) -> int:
@@ -785,6 +794,7 @@ class Ardiq:
                 "concurrency": self.concurrency,
                 "prefetch": self.prefetch,
                 "lanes": self.priorities,
+                "limits": self.limits,
             }
         )
 

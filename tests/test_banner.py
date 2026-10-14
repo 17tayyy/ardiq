@@ -164,3 +164,13 @@ def test_startup_banner_shows_lane_weights(make_app):
     )
 
     assert "low (1), high (4)" in render(app)
+
+
+def test_startup_banner_shows_lane_limits(make_app):
+    app = make_app(
+        "banner-limits", priorities=["heavy", "default"], limits={"heavy": 1}
+    )
+    plain = make_app("banner-plain")
+
+    assert "limits" in render(app) and "heavy 1" in render(app)
+    assert "limits" not in render(plain)
