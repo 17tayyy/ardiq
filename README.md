@@ -538,7 +538,7 @@ back with no backoff, and delays and schedules are ignored.
 | `priorities` | `["default"]` | Priority names, **lowest-first** |
 | `weights` | `None` | Lane name to weight, e.g. `{"low": 1, "high": 4}`; lanes share pickups by weight instead of draining highest-first |
 | `concurrency` | `16` | Max tasks running at once |
-| `prefetch` | `concurrency * 2` | Max tasks held in memory (drives backpressure) |
+| `prefetch` | `concurrency * 2` (`concurrency` with several lanes) | Max tasks held in memory (drives backpressure) |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed |
 | `result_ttl_ms` | `300000` | How long results live (`0` drops, negative keeps forever) |
 | `burst` | `False` | Exit once the queue drains |

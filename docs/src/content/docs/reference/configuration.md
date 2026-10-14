@@ -27,7 +27,7 @@ app = Ardiq(
 | `default_priority` | the middle lane | Where a task with no `priority` goes. Must be one of `priorities`. |
 | `weights` | `None` | Lane name to weight. Lanes share pickups by weight instead of draining highest-first. |
 | `concurrency` | `16` | Max tasks running at once in a worker. |
-| `prefetch` | `concurrency * 2` | Max tasks held in memory; drives backpressure against Redis. |
+| `prefetch` | `concurrency * 2`, or `concurrency` with several lanes | Max tasks held in memory; drives backpressure against Redis. |
 | `idle_timeout_ms` | `60000` | When an unrenewed in-flight task may be reclaimed by another worker. |
 | `result_ttl_ms` | `300000` | How long results live. `0` drops results immediately; a negative value keeps them forever. |
 | `burst` | `False` | Exit once the queue drains (also settable via `app.burst` or the CLI `--burst`). |
@@ -84,7 +84,15 @@ a `ValueError`. `app.weights` reads them back, lowest lane first.
 
 `concurrency` caps how many tasks execute simultaneously. `prefetch` caps how many are
 pulled into memory ahead of execution; a larger prefetch smooths bursts but holds more work
-off Redis. The default `prefetch = concurrency * 2` is a sensible starting point.
+off Redis. With a single lane the default is `prefetch = concurrency * 2`.
+
+With several lanes the default is `prefetch = concurrency`. A prefetched task waits in
+memory in the order it was read, so a task that reaches a higher lane later would queue
+behind it. With `prefetch` equal to `concurrency` the worker reads only when a slot frees
+up, so the lane order (or the `weights`) decides what runs next. A larger `prefetch`
+brings the delay back: a higher-lane task can wait for up to `prefetch - concurrency`
+lower-lane tasks on top of the ones already running. Raise it only when keeping every slot
+busy matters more than the order.
 
 ### `idle_timeout_ms`
 

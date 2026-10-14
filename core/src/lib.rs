@@ -163,10 +163,17 @@ impl ArdiqCore {
             .map(|v| v.extract())
             .transpose()?
             .unwrap_or(16);
+        // With several lanes, a prefetched lower-lane task would wait ahead of a
+        // higher-lane one that arrives later, so only read what can start now.
+        let default_prefetch = if priorities.len() > 1 {
+            concurrency
+        } else {
+            concurrency * 2
+        };
         let prefetch: i64 = opt(&config, "prefetch")?
             .map(|v| v.extract())
             .transpose()?
-            .unwrap_or((concurrency as i64) * 2)
+            .unwrap_or(default_prefetch as i64)
             .max(1);
         let idle_timeout_ms: i64 = opt(&config, "idle_timeout_ms")?
             .map(|v| v.extract())

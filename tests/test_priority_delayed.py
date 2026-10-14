@@ -151,3 +151,40 @@ async def test_waking_up_holds_no_more_than_prefetch(redis, make_app, poll):
         finish.set()
         app.stop()
         await asyncio.wait_for(run, timeout=15)
+
+
+def test_prefetch_defaults_to_concurrency_with_several_lanes(make_app):
+    assert make_app("pf", priorities=["low", "high"], concurrency=3).prefetch == 3
+    assert make_app("pf", concurrency=3).prefetch == 6
+    assert make_app("pf", priorities=["low", "high"], prefetch=5).prefetch == 5
+
+
+async def test_a_later_higher_lane_task_does_not_wait_behind_prefetched_work(
+    redis, make_app, poll
+):
+    # Issue #2: with prefetch above concurrency, the next low task was already in
+    # memory when the high one arrived, so high waited for two low tasks.
+    app = make_app("overtake", priorities=["low", "high"], concurrency=1)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    order: list[str] = []
+
+    @app.task()
+    async def hold(tag):
+        order.append(tag)
+        started.set()
+        await finish.wait()
+
+    jobs = [await hold.options(priority="low").enqueue(f"low{i}") for i in range(2)]
+    run = asyncio.ensure_future(app.run())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        jobs.append(await hold.options(priority="high").enqueue("high"))
+        finish.set()
+        for job in jobs:
+            assert await poll(lambda job=job: _complete(app, job.id))
+        assert order == ["low0", "high", "low1"]
+    finally:
+        finish.set()
+        app.stop()
+        await asyncio.wait_for(run, timeout=15)
