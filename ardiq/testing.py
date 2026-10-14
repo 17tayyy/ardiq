@@ -77,7 +77,7 @@ class _InlineCore:
         finally:
             self._running.pop(task_id, None)
 
-    async def run(self, callback: Any) -> None:
+    async def run(self, callback: Any, info: str | None = None) -> None:
         raise RuntimeError("inline mode runs tasks on enqueue; there is no worker")
 
     def stop(self) -> None:

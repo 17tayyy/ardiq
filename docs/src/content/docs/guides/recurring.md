@@ -103,3 +103,7 @@ That means:
 A worker re-checks each cron's next fire time every `cron_poll_s` (default 1s, see
 [Configuration](/reference/configuration/)). Recurring tasks don't run under
 [burst mode](/guides/worker/#burst-mode), which exits as soon as the queue drains.
+
+`ardiq status` lists every cron with its next fire time and the outcome of its last run.
+The last run is recorded apart from its result, so it is still there after
+`result_ttl_ms` has expired the result. See the [CLI reference](/reference/cli/#ardiq-status).

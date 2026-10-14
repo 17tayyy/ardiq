@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
 from ardiq._core import ArdiqError
+from ardiq.status import parse_heartbeat
 
 if TYPE_CHECKING:
     from ardiq import Ardiq
@@ -50,11 +51,8 @@ def judge(facts: dict[str, Any], priorities: list[str], target: str) -> list[Che
     if "workers_error" in facts:
         checks.append(Check("workers", "fail", facts["workers_error"]))
     elif workers:
-        checks.append(
-            Check(
-                "workers", "ok", f"{len(workers)} live: " + ", ".join(sorted(workers))
-            )
-        )
+        ids = sorted(parse_heartbeat(w).get("id", "?") for w in workers)
+        checks.append(Check("workers", "ok", f"{len(workers)} live: " + ", ".join(ids)))
     else:
         checks.append(Check("workers", "warn", "none live on this queue"))
     return checks

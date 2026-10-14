@@ -60,6 +60,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
 - **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
 - **`ardiq doctor`**: checks Redis reachability, version and permissions, every lane, and which workers are alive
+- **`ardiq status` / `ardiq purge`**: see what each lane holds, what runs, when each cron fires and how its last run went; drop what waits
 - **Metrics from the core** (`app.metrics()`): outcomes plus run and wait time per task and lane, with no instrumentation in your tasks
 - **Middleware** (`@app.middleware`) around every attempt, plus **headers** from producer to worker (`@app.on_enqueue`), for tracing and metrics
 - **Error hooks** (`@app.on_error`): send every failed attempt to Sentry or your own reporter
@@ -404,10 +405,21 @@ ok    version    7.4.1
 ok    write      keys and Lua scripts allowed
 ok    lane high  0 queued, 0 delayed, 0 in flight
 ok    lane low   12 queued, 3 delayed, 4 in flight
-ok    workers    2 live: 1f3a9c2e running=4, 8b2d7e01 running=0
+ok    workers    2 live: 1f3a9c2e, 8b2d7e01
 ```
 
 `--json` prints the same checks for scripts.
+
+`ardiq status` shows what the queue holds right now: per lane what waits, what is
+scheduled and what workers hold, the tasks running and their names, each cron's next
+fire time and last outcome, and the live workers. `ardiq purge` drops what waits,
+asking first unless you pass `--yes`:
+
+```console
+$ ardiq status myapp:app
+$ ardiq status myapp:app --json
+$ ardiq purge myapp:app --lane backfill
+```
 
 ## Metrics
 

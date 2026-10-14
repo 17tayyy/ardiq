@@ -50,6 +50,8 @@ pub struct WorkerConfig {
     pub poll_block_ms: i64,
     pub result_ttl_ms: i64,
     pub burst: bool,
+    /// What the heartbeat says about this worker; the app fills it in.
+    pub info: Option<String>,
 }
 
 #[derive(Clone)]
@@ -352,8 +354,13 @@ impl Worker {
                     .push(message_id.clone());
             }
 
-            let running: usize = grouped.values().map(Vec::len).sum();
-            let status = format!("{} running={running}", self.config.worker_id);
+            let status = match &self.config.info {
+                Some(info) => info.clone(),
+                None => {
+                    let running: usize = grouped.values().map(Vec::len).sum();
+                    format!("{} running={running}", self.config.worker_id)
+                }
+            };
             if let Err(err) = self
                 .queue
                 .heartbeat(

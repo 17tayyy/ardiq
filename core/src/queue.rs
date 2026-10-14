@@ -3,11 +3,15 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::aio::ConnectionLike;
-use redis::streams::{StreamAutoClaimReply, StreamInfoGroupsReply, StreamReadReply};
+use redis::streams::{
+    StreamAutoClaimReply, StreamInfoGroupsReply, StreamPendingReply, StreamRangeReply,
+    StreamReadReply,
+};
 use redis::{RedisResult, Script};
 
 const GROUP: &str = "workers";
 const BATCH_CHUNK: usize = 1000;
+const PURGE_CHUNK: i64 = 500;
 
 pub struct StagedTask {
     pub task_id: String,
@@ -21,6 +25,20 @@ pub struct StagedTask {
 type DeadFields = (Option<Vec<u8>>, Option<Vec<u8>>, Option<String>);
 pub type DeadEntry = (String, Vec<u8>, Vec<u8>, String, i64);
 pub type LaneHealth = (String, i64, i64, Option<(i64, i64)>);
+/// Per lane: (priority, stream length, pending, delayed, next delayed fire ms).
+pub type LaneStatus = (String, i64, i64, i64, Option<i64>);
+
+/// What `ardiq status` shows, read in one pass.
+pub struct Overview {
+    pub lanes: Vec<LaneStatus>,
+    /// Pending entries per consumer (worker id), summed over the lanes.
+    pub held: HashMap<String, i64>,
+    /// Running tasks: (task id, payload if still there, tries).
+    pub running: Vec<(String, Option<Vec<u8>>, i64)>,
+    pub workers: Vec<String>,
+    pub dead: i64,
+    pub crons: HashMap<String, String>,
+}
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -65,6 +83,7 @@ pub struct Queue {
     publish_delayed: Script,
     abort_task: Script,
     replay_dead: Script,
+    purge_lane: Script,
 }
 
 impl Queue {
@@ -91,6 +110,7 @@ impl Queue {
             publish_delayed: Script::new(include_str!("scripts/publish_delayed.lua")),
             abort_task: Script::new(include_str!("scripts/abort_task.lua")),
             replay_dead: Script::new(include_str!("scripts/replay_dead.lua")),
+            purge_lane: Script::new(include_str!("scripts/purge_lane.lua")),
         }
     }
 
@@ -130,6 +150,9 @@ impl Queue {
     }
     fn health_key(&self, worker_id: &str) -> String {
         format!("{}:health:{worker_id}", self.prefix)
+    }
+    fn cron_key(&self) -> String {
+        format!("{}:cron:last", self.prefix)
     }
     pub fn result_channel(&self, task_id: &str) -> String {
         format!("{}:result:channel:{task_id}", self.prefix)
@@ -821,6 +844,140 @@ impl Queue {
             .arg(self.health_key(worker_id))
             .query_async(conn)
             .await
+    }
+
+    /// Keep the last run of a cron, which outlives its result.
+    pub async fn record_cron<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        name: &str,
+        record: &str,
+    ) -> RedisResult<()> {
+        redis::cmd("HSET")
+            .arg(self.cron_key())
+            .arg(name)
+            .arg(record)
+            .query_async(conn)
+            .await
+    }
+
+    pub async fn overview<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<Overview> {
+        let mut lanes = Vec::with_capacity(self.priorities.len());
+        let mut held: HashMap<String, i64> = HashMap::new();
+        for priority in &self.priorities {
+            let stream = self.stream_key(priority);
+            let (length, delayed, next): (i64, i64, Vec<(String, f64)>) = redis::pipe()
+                .cmd("XLEN")
+                .arg(&stream)
+                .cmd("ZCARD")
+                .arg(self.delayed_key(priority))
+                .cmd("ZRANGE")
+                .arg(self.delayed_key(priority))
+                .arg(0)
+                .arg(0)
+                .arg("WITHSCORES")
+                .query_async(conn)
+                .await?;
+            let pending: RedisResult<StreamPendingReply> = redis::cmd("XPENDING")
+                .arg(&stream)
+                .arg(GROUP)
+                .query_async(conn)
+                .await;
+            let pending = match pending {
+                Ok(StreamPendingReply::Data(data)) => {
+                    for consumer in data.consumers {
+                        *held.entry(consumer.name).or_default() += consumer.pending as i64;
+                    }
+                    data.count as i64
+                }
+                Ok(_) => 0, // nothing pending
+                // No stream or group yet: no worker has read this lane.
+                Err(err) if err.code() == Some("NOGROUP") => 0,
+                Err(err) => return Err(err),
+            };
+            let next = next.first().map(|(_, score)| *score as i64);
+            lanes.push((priority.clone(), length, pending, delayed, next));
+        }
+
+        let ids: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(self.running_set())
+            .query_async(conn)
+            .await?;
+        let mut pipe = redis::pipe();
+        for id in &ids {
+            pipe.cmd("GET").arg(self.task_key(id));
+            pipe.cmd("GET").arg(self.retry_key(id));
+        }
+        let fields: Vec<(Option<Vec<u8>>, Option<i64>)> = if ids.is_empty() {
+            Vec::new()
+        } else {
+            pipe.query_async(conn).await?
+        };
+        let running = ids
+            .into_iter()
+            .zip(fields)
+            .map(|(id, (payload, tries))| (id, payload, tries.unwrap_or(0)))
+            .collect();
+
+        Ok(Overview {
+            lanes,
+            held,
+            running,
+            workers: self.live_workers(conn).await?,
+            dead: self.dead_count(conn).await?,
+            crons: redis::cmd("HGETALL")
+                .arg(self.cron_key())
+                .query_async(conn)
+                .await?,
+        })
+    }
+
+    /// Drop what waits in these lanes, delivered entries aside: per lane,
+    /// (priority, waiting dropped, scheduled dropped). Work that arrives while
+    /// it runs is left alone, so a busy producer cannot keep it going.
+    pub async fn purge<C: ConnectionLike>(
+        &self,
+        conn: &mut C,
+        lanes: &[String],
+    ) -> RedisResult<Vec<(String, i64, i64)>> {
+        let prefix = format!("{}:task:", self.prefix);
+        let mut dropped = Vec::with_capacity(lanes.len());
+        for priority in lanes {
+            let stream = self.stream_key(priority);
+            let delayed = self.delayed_key(priority);
+            let newest: StreamRangeReply = redis::cmd("XREVRANGE")
+                .arg(&stream)
+                .arg("+")
+                .arg("-")
+                .arg("COUNT")
+                .arg(1)
+                .query_async(conn)
+                .await?;
+            let last = newest.ids.first().map(|e| e.id.clone()).unwrap_or_default();
+            let mut left: i64 = redis::cmd("ZCARD").arg(&delayed).query_async(conn).await?;
+            let (mut waiting, mut scheduled) = (0, 0);
+            loop {
+                let (w, s): (i64, i64) = self
+                    .purge_lane
+                    .arg(&stream)
+                    .arg(&delayed)
+                    .arg(GROUP)
+                    .arg(&prefix)
+                    .arg(&last)
+                    .arg(PURGE_CHUNK)
+                    .arg(left.min(PURGE_CHUNK))
+                    .invoke_async(conn)
+                    .await?;
+                waiting += w;
+                scheduled += s;
+                left -= s;
+                if w == 0 && s == 0 {
+                    break;
+                }
+            }
+            dropped.push((priority.clone(), waiting, scheduled));
+        }
+        Ok(dropped)
     }
 
     pub async fn server_version<C: ConnectionLike>(&self, conn: &mut C) -> RedisResult<String> {

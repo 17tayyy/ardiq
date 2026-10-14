@@ -7,7 +7,10 @@ import contextlib
 import functools
 import hashlib
 import inspect
+import json
 import logging
+import os
+import socket
 import time
 import uuid
 from collections.abc import (
@@ -20,6 +23,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass
 from datetime import timedelta
+from importlib.metadata import version
 from typing import Any, cast, overload
 
 from ardiq._core import ArdiqCore
@@ -47,6 +51,7 @@ from ardiq.tasks import Job, PreparedTask, Task
 # counted apart in the metrics.
 SUCCESS, FAILURE, RETRY, DEAD, ABORT = 0, 1, 2, 3, 4
 DEFAULT_MAX_RETRIES = 3
+_CRON_OUTCOMES = {SUCCESS: "succeeded", ABORT: "aborted"}
 
 ErrorHook = Callable[[ErrorContext], Any]
 EnqueueHook = Callable[[EnqueueContext], Any]
@@ -570,6 +575,36 @@ class Ardiq:
         self, task_id: str, payload: bytes, tries: int, aborted: bool = False
     ) -> tuple[int, bytes, int, str]:
         """The core's per-task callback. Returns (outcome, result_bytes, retry_ms, fn_name)."""
+        done = await self._execute_task(task_id, payload, tries, aborted)
+        outcome, _, _, task_name = done
+        if (
+            outcome != RETRY
+            and task_id.startswith("cron:")
+            and task_name in self._crons
+        ):
+            await self._record_cron(task_name, task_id, outcome, tries)
+        return done
+
+    async def _record_cron(
+        self, name: str, task_id: str, outcome: int, tries: int
+    ) -> None:
+        # Kept apart from the result, which may expire long before the next run.
+        record = {
+            "fire": int(task_id.rpartition(":")[2]),
+            "outcome": _CRON_OUTCOMES.get(outcome, "failed"),
+            "tries": tries,
+            "finished": _now_ms(),
+        }
+        try:
+            await self._core.record_cron(name, json.dumps(record))
+        except Exception:
+            logger.warning(
+                "ardiq could not record the run of cron %r", name, exc_info=True
+            )
+
+    async def _execute_task(
+        self, task_id: str, payload: bytes, tries: int, aborted: bool
+    ) -> tuple[int, bytes, int, str]:
         data = self._loads(payload)
         task_name = data["f"]
         worker_id = self.worker_id
@@ -701,19 +736,34 @@ class Ardiq:
             # (which drains and exits) skips both. Aborts are still honored there:
             # the core checks for one before handing a task over.
             if self.burst:
-                await self._core.run(self._execute)
+                await self._core.run(self._execute, self._worker_info())
                 return
             background = [asyncio.ensure_future(self._abort_watcher())]
             if self._crons:
                 background.append(asyncio.ensure_future(self._cron_scheduler()))
             try:
-                await self._core.run(self._execute)
+                await self._core.run(self._execute, self._worker_info())
             finally:
                 for task in background:
                     task.cancel()
                 for task in background:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+
+    def _worker_info(self) -> str:
+        # What this worker's heartbeat says about it, for `ardiq status`.
+        return json.dumps(
+            {
+                "id": self.worker_id,
+                "host": socket.gethostname(),
+                "pid": os.getpid(),
+                "version": version("ardiq"),
+                "started": _now_ms(),
+                "concurrency": self.concurrency,
+                "prefetch": self.prefetch,
+                "lanes": self.priorities,
+            }
+        )
 
     def stop(self) -> None:
         """Signal the worker loop to shut down."""

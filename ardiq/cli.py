@@ -1,4 +1,5 @@
-"""Command-line interface: `ardiq run module:app`, `ardiq dlq ...`, `ardiq doctor`."""
+"""Command-line interface: `ardiq run module:app`, `ardiq status`, `ardiq purge`,
+`ardiq dlq ...`, `ardiq doctor`."""
 
 from __future__ import annotations
 
@@ -148,6 +149,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("app", help="App path, e.g. 'myapp:app'")
     doctor.add_argument("--json", action="store_true", help="Print the checks as JSON")
+
+    status = sub.add_parser(
+        "status",
+        help="Show what a queue holds, what runs, and when each cron fires",
+        description="Show what a queue holds, what runs, and when each cron fires",
+    )
+    status.add_argument("app", help="App path, e.g. 'myapp:app'")
+    status.add_argument("--json", action="store_true", help="Print it as JSON")
+
+    purge = sub.add_parser(
+        "purge",
+        help="Drop the tasks waiting in a queue",
+        description="Drop the tasks waiting in a queue, scheduled ones included. "
+        "Running and prefetched tasks, results and dead letters stay.",
+    )
+    purge.add_argument("app", help="App path, e.g. 'myapp:app'")
+    purge.add_argument("--lane", help="Only this lane")
+    purge.add_argument(
+        "-y", "--yes", action="store_true", help="Drop without asking first"
+    )
     return parser
 
 
@@ -295,6 +316,56 @@ def _doctor(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def _status(args: argparse.Namespace) -> None:
+    from ardiq.status import gather, render
+
+    status = asyncio.run(gather(import_string(args.app)))
+    print(json.dumps(status) if args.json else render(status))
+
+
+def _purge(args: argparse.Namespace) -> None:
+    app = import_string(args.app)
+    if args.lane is not None and args.lane not in app.priorities:
+        raise SystemExit(f"ardiq purge: no lane {args.lane!r} in {app.priorities}")
+    if not asyncio.run(_purge_lanes(app, args.lane, args.yes)):
+        raise SystemExit(1)
+
+
+async def _purge_lanes(app: Ardiq, lane: str | None, yes: bool) -> bool:
+    if not yes:
+        from ardiq.status import gather
+
+        lanes = [
+            entry
+            for entry in (await gather(app))["lanes"]
+            if lane in (None, entry["name"])
+        ]
+        waiting = sum(entry["waiting"] for entry in lanes)
+        scheduled = sum(entry["scheduled"] for entry in lanes)
+        if waiting + scheduled == 0:
+            print("nothing to purge", file=sys.stderr)
+            return True
+        where = f"lane {lane!r} of " if lane else ""
+        print(
+            f"about to drop {waiting} waiting and {scheduled} scheduled tasks "
+            f"from {where}queue {app.queue_name!r}",
+            file=sys.stderr,
+        )
+        if not sys.stdin.isatty():
+            print("not a terminal: pass --yes to confirm", file=sys.stderr)
+            return False
+        print("continue? [y/N] ", end="", file=sys.stderr, flush=True)
+        if input().strip().lower() not in ("y", "yes"):
+            print("nothing purged", file=sys.stderr)
+            return False
+    for name, waiting, scheduled in reversed(await app._core.purge(lane)):
+        print(
+            f"{name}: dropped {waiting} waiting, {scheduled} scheduled",
+            file=sys.stderr,
+        )
+    return True
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -306,6 +377,12 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "doctor":
         _doctor(args)
+        return
+    if args.command == "status":
+        _status(args)
+        return
+    if args.command == "purge":
+        _purge(args)
         return
     _run(args)
 

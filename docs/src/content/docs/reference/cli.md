@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: The ardiq command-line interface for running workers, managing the dead letter queue, and checking a deployment.
+description: The ardiq command-line interface for running workers, inspecting and purging a queue, managing the dead letter queue, and checking a deployment.
 ---
 
 The `ardiq` command comes with the base install — it pulls in no dependencies of its own,
@@ -105,7 +105,7 @@ ok    version    7.4.1
 ok    write      keys and Lua scripts allowed
 ok    lane high  0 queued, 0 delayed, 0 in flight
 ok    lane low   12 queued, 3 delayed, 4 in flight
-ok    workers    2 live: 1f3a9c2e running=4, 8b2d7e01 running=0
+ok    workers    2 live: 1f3a9c2e, 8b2d7e01
 ```
 
 | Check | Fails or warns when |
@@ -120,6 +120,66 @@ The command exits with status 1 if any check fails; warnings alone exit with 0. 
 from a machine and environment where the app runs, since it uses the app's own
 `redis_url`, queue and priorities. `--json` prints `{"ok": ..., "checks": [{"name",
 "status", "detail"}, ...]}`.
+
+## `ardiq status`
+
+Show what a queue holds, what is running, when each cron fires next and how its last run
+went, and which workers are alive.
+
+```console
+$ ardiq status MODULE:ATTR [--json]
+queue  uatu
+
+lane      waiting  scheduled  held
+default         2          2     0  next 2026-10-14 16:10:00Z
+backfill       14          1     1  next 2026-10-14 18:00:00Z
+
+running  1
+  c6c39f890d2c4d71bff82afeb86fdf37  process_scene  try 1
+
+crons
+  analyse  next 2026-10-14 16:10:00Z  last succeeded 2026-10-14 16:00:00Z
+  health   next 2026-10-14 16:05:00Z  last failed 2026-10-14 16:00:00Z (try 3)
+
+workers  1
+  fb222ad8  worker-1 pid 7  1.2.0  up 3h12m  concurrency 1  holding 1
+
+dead letters  0
+```
+
+| Section | What it shows |
+|---|---|
+| lanes | Highest first. `waiting` is in the stream and not picked up yet, `scheduled` waits for its time (delays, retries, the next occurrence of each cron), and `held` has been picked up by a worker, running or prefetched. `next` is the earliest scheduled time. |
+| `running` | Tasks executing right now, with their id, name and attempt. The text view lists 20; `--json` lists them all. |
+| `crons` | Each `@app.cron` of the app, with its next fire time and the outcome of its last run. The last run is kept apart from its result, so it outlives `result_ttl_ms`. A run being retried counts once it settles. |
+| `workers` | Live workers: host, pid, version, uptime, concurrency and how many tasks each holds. Work held by a worker whose heartbeat expired shows as `gone` until another worker reclaims it after `idle_timeout_ms`. A worker older than 1.2 shows its id only. |
+| `dead letters` | How many tasks are in the [dead letter queue](#ardiq-dlq). |
+
+Times are UTC. `--json` prints the same data, with times in epoch milliseconds.
+
+## `ardiq purge`
+
+Drop the tasks waiting in a queue: what sits in the streams and what is scheduled,
+including retries and the next occurrence of each cron, which a running worker schedules
+again within `cron_poll_s`. Tasks already picked up by a worker, running or prefetched,
+are left alone, and so are results and the dead letter queue.
+
+```console
+$ ardiq purge MODULE:ATTR [--lane LANE] [--yes]
+about to drop 14 waiting and 3 scheduled tasks from queue 'uatu'
+continue? [y/N] y
+default: dropped 2 waiting, 2 scheduled
+backfill: dropped 12 waiting, 1 scheduled
+```
+
+| Option | Description |
+|---|---|
+| `--lane LANE` | Only this lane. It must be one of the app's `priorities`. |
+| `--yes`, `-y` | Drop without asking. Without it the command asks first, and refuses with status 1 when stdin is not a terminal. |
+
+A purged task is gone: `job.status()` reports `not_found`, and the id of a
+[unique task](/guides/enqueuing/#unique-tasks) is free again. Tasks enqueued while the purge runs are
+kept.
 
 ## Signals
 

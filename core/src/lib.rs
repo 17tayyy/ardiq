@@ -206,6 +206,7 @@ impl ArdiqCore {
             poll_block_ms,
             result_ttl_ms,
             burst,
+            info: None,
         };
 
         Ok(ArdiqCore {
@@ -318,14 +319,24 @@ impl ArdiqCore {
         })
     }
 
-    fn run<'py>(&self, py: Python<'py>, callback: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (callback, info=None))]
+    fn run<'py>(
+        &self,
+        py: Python<'py>,
+        callback: Py<PyAny>,
+        info: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let locals = TaskLocals::with_running_loop(py)?.copy_context(py)?;
         let executor = Arc::new(PyExecutor { callback, locals });
+        let config = WorkerConfig {
+            info,
+            ..self.config.clone()
+        };
         let worker = Worker::new(
             self.client.clone(),
             self.queue.clone(),
             self.metrics.clone(),
-            self.config.clone(),
+            config,
             executor,
             self.cancel.clone(),
         );
@@ -513,6 +524,73 @@ impl ArdiqCore {
         future_into_py(py, async move {
             let mut conn = shared_conn(&conn, &client).await?;
             queue.dead_count(&mut conn).await.map_err(to_py_err)
+        })
+    }
+
+    fn record_cron<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        record: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            queue
+                .record_cron(&mut conn, &name, &record)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    /// Facts for `ardiq status`; payloads stay bytes for the app to decode.
+    fn overview<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            let overview = queue.overview(&mut conn).await.map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                let running: Vec<_> = overview
+                    .running
+                    .into_iter()
+                    .map(|(id, payload, tries)| (id, payload.map(|p| PyBytes::new(py, &p)), tries))
+                    .collect();
+                let facts = PyDict::new(py);
+                facts.set_item("lanes", overview.lanes)?;
+                facts.set_item("held", overview.held)?;
+                facts.set_item("running", running)?;
+                facts.set_item("workers", overview.workers)?;
+                facts.set_item("dead", overview.dead)?;
+                facts.set_item("crons", overview.crons)?;
+                Ok(facts.into_any().unbind())
+            })
+        })
+    }
+
+    /// Drop waiting and scheduled tasks from one lane, or from all of them:
+    /// `[(priority, waiting, scheduled)]`.
+    #[pyo3(signature = (lane=None))]
+    fn purge<'py>(&self, py: Python<'py>, lane: Option<String>) -> PyResult<Bound<'py, PyAny>> {
+        let lanes = match lane {
+            Some(lane) if self.priorities.contains(&lane) => vec![lane],
+            Some(lane) => {
+                return Err(PyValueError::new_err(format!(
+                    "no lane {lane:?} in {:?}",
+                    self.priorities
+                )))
+            }
+            None => self.priorities.clone(),
+        };
+        let queue = self.queue.clone();
+        let conn = self.conn.clone();
+        let client = self.client.clone();
+        future_into_py(py, async move {
+            let mut conn = shared_conn(&conn, &client).await?;
+            queue.purge(&mut conn, &lanes).await.map_err(to_py_err)
         })
     }
 

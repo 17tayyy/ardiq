@@ -173,7 +173,8 @@ Every key is namespaced by `queue_name`, so unrelated workloads can share one Re
 | `:task:abort:<id>` | string | abort marker, honored at pickup |
 | `:index:running` | set | task ids executing right now |
 | `:index:results` | zset | result ids by expiry, swept by the heartbeat |
-| `:health:<worker_id>` | string | worker heartbeat, expires after `idle_timeout_ms` |
+| `:health:<worker_id>` | string | worker heartbeat as JSON (host, pid, version, lanes...), expires after `idle_timeout_ms` |
+| `:cron:last` | hash | last run of each cron (fire time, outcome, tries), for `ardiq status` |
 | `:result:channel:<id>` | pub/sub | published when a result lands, so `await job.result()` does not poll |
 | `:abort:channel` | pub/sub | published on abort, so a running task can be cancelled |
 
