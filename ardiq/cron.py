@@ -102,6 +102,19 @@ def _cron_next(spec: _CronSpec, after_ms: int) -> int:
     raise ValueError("cron expression never matches within 5 years")
 
 
+def _cron_prev(spec: _CronSpec, before_ms: int) -> int:
+    """Last fire time (epoch ms, UTC) strictly before `before_ms`."""
+    dt = datetime.fromtimestamp(before_ms / 1000, UTC).replace(second=0, microsecond=0)
+    if dt.timestamp() * 1000 >= before_ms:  # on a minute boundary
+        dt -= timedelta(minutes=1)
+    limit = dt - timedelta(days=366 * 5)
+    while dt >= limit:
+        if _cron_matches(spec, dt):
+            return round(dt.timestamp() * 1000)
+        dt -= timedelta(minutes=1)
+    raise ValueError("cron expression never matched within 5 years")
+
+
 class _Schedule:
     """A recurring schedule: the next fire time after a given moment (epoch ms)."""
 
@@ -123,3 +136,10 @@ class _Schedule:
         assert self._interval_ms is not None
         ms = self._interval_ms
         return ((now_ms // ms) + 1) * ms
+
+    def previous_before(self, fire_ms: int) -> int:
+        if self._cron is not None:
+            return _cron_prev(self._cron, fire_ms)
+        assert self._interval_ms is not None
+        ms = self._interval_ms
+        return ((fire_ms - 1) // ms) * ms

@@ -48,7 +48,7 @@ async def gather(app: Ardiq) -> dict[str, Any]:
     ]
 
     crons = []
-    for name, (schedule, _) in sorted(app._crons.items()):
+    for name, (schedule, *_) in sorted(app._crons.items()):
         last = facts["crons"].get(name)
         crons.append(
             {

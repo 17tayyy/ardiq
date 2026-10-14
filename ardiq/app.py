@@ -52,6 +52,7 @@ from ardiq.tasks import Job, PreparedTask, Task
 SUCCESS, FAILURE, RETRY, DEAD, ABORT = 0, 1, 2, 3, 4
 DEFAULT_MAX_RETRIES = 3
 _CRON_OUTCOMES = {SUCCESS: "succeeded", ABORT: "aborted"}
+_WAITING = ("queued", "scheduled")  # a retry waits in the delayed set too
 
 ErrorHook = Callable[[ErrorContext], Any]
 EnqueueHook = Callable[[EnqueueContext], Any]
@@ -64,6 +65,10 @@ logger = logging.getLogger("ardiq")
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _cron_id(name: str, fire_ms: int) -> str:
+    return f"cron:{name}:{fire_ms}"
 
 
 def _histogram(raw: tuple[list[tuple[float, int]], float, int]) -> Histogram:
@@ -100,7 +105,7 @@ class Ardiq:
         self._dumps = serializer or _default_dumps
         self._loads = deserializer or _default_loads
         self._registry: dict[str, _Registered] = {}
-        self._crons: dict[str, tuple[_Schedule, str | None]] = {}
+        self._crons: dict[str, tuple[_Schedule, str | None, bool]] = {}
         self._running: dict[str, asyncio.Task] = {}  # in-flight, for abort
         self._lifespan: Callable[[], AsyncGenerator[Any]] | None = None
         self._error_hooks: list[ErrorHook] = []
@@ -272,9 +277,13 @@ class Ardiq:
         backoff_ms: int = 0,
         timeout: float | None = None,
         priority: str | None = None,
+        coalesce: bool = False,
     ) -> Callable[[Callable[P, R]], Task[P, R]]:
         """Register a recurring task. Pass a 5-field cron `spec` (UTC) or an
-        `every=` interval (timedelta or seconds). It fires while a worker runs."""
+        `every=` interval (timedelta or seconds). It fires while a worker runs.
+
+        With `coalesce=True`, an occurrence is skipped while the previous one is
+        still waiting to start, so a busy worker runs one instead of a backlog."""
         schedule = _Schedule(every=every, cron=spec)
         self._check_priority(priority)
 
@@ -282,7 +291,7 @@ class Ardiq:
             task_name = self._register(
                 name, fn, "cron", max_retries, backoff_ms, timeout
             )
-            self._crons[task_name] = (schedule, priority)
+            self._crons[task_name] = (schedule, priority, coalesce)
             return Task(self, task_name, fn, priority)
 
         return wrap
@@ -503,7 +512,7 @@ class Ardiq:
             name,
             (),
             {},
-            task_id=f"cron:{name}:{fire_ms}",
+            task_id=_cron_id(name, fire_ms),
             priority=priority,
             schedule_ms=fire_ms,
         )
@@ -511,13 +520,23 @@ class Ardiq:
     async def _cron_scheduler(self) -> None:
         """Keep each cron's next occurrence staged in the delayed queue. The Rust
         producer promotes it when due; dedup makes re-staging a no-op."""
+        staged: dict[str, str] = {}  # coalesced crons: the occurrence staged last
         while True:
             now = _now_ms()
-            for cron_name, (schedule, priority) in self._crons.items():
+            for cron_name, (schedule, priority, coalesce) in self._crons.items():
                 try:
-                    await self._enqueue_cron(
-                        cron_name, schedule.next_after(now), priority
-                    )
+                    fire = schedule.next_after(now)
+                    if coalesce:
+                        # Hold back while that occurrence waits to start. A fresh
+                        # worker checks the one that came due last.
+                        last = staged.get(cron_name) or _cron_id(
+                            cron_name, schedule.previous_before(fire)
+                        )
+                        staged[cron_name] = last
+                        if await self.status(last) in _WAITING:
+                            continue
+                        staged[cron_name] = _cron_id(cron_name, fire)
+                    await self._enqueue_cron(cron_name, fire, priority)
                 except Exception:
                     logger.exception("ardiq cron scheduling failed for %r", cron_name)
             await asyncio.sleep(self._cron_poll_s)

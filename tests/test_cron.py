@@ -158,3 +158,89 @@ def test_the_month_field_excludes_other_months():
     assert _cron_next(spec, 0) == round(
         datetime(1970, 3, 1, tzinfo=UTC).timestamp() * 1000
     )
+
+
+def test_previous_before_walks_back_one_occurrence():
+    s = _Schedule(cron="*/10 * * * *")
+    assert s.previous_before(_ms(2026, 6, 13, 12, 0)) == _ms(2026, 6, 13, 11, 50)
+    assert s.previous_before(_ms(2026, 6, 13, 12, 5) + 30_000) == _ms(
+        2026, 6, 13, 12, 0
+    )
+    daily = _Schedule(cron="0 3 * * *")
+    assert daily.previous_before(_ms(2026, 6, 13, 3, 0)) == _ms(2026, 6, 12, 3, 0)
+    assert _Schedule(every=0.3).previous_before(1200) == 900
+
+
+async def _waiting_occurrences(redis, queue: str) -> int:
+    return len([k async for k in redis.scan_iter(f"ardiq:{queue}:task:data:cron:*")])
+
+
+@pytest.mark.parametrize("coalesce", [True, False])
+async def test_a_busy_worker_stacks_occurrences_unless_coalesced(
+    redis, make_app, poll, coalesce
+):
+    # Issue #3: while the only slot is busy, every occurrence used to queue up
+    # behind it and run back to back once it freed.
+    queue = f"cron_coalesce_{coalesce}"
+    app = make_app(queue, concurrency=1, poll_block_ms=50, cron_poll_s=0.05)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    ticks: list[float] = []
+
+    @app.task()
+    async def hold():
+        started.set()
+        await finish.wait()
+
+    @app.cron(every=0.2, coalesce=coalesce)
+    async def tick():
+        ticks.append(time.monotonic())
+
+    await hold.enqueue()
+    run = asyncio.ensure_future(app.run())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.sleep(1.2)  # about six periods while the slot is taken
+        waiting = await _waiting_occurrences(redis, queue)
+        if coalesce:
+            assert waiting == 1
+        else:
+            assert waiting >= 4
+        finish.set()
+        assert await poll(lambda: _count_at_least(ticks, 1))  # the waiting one runs
+    finally:
+        finish.set()
+        app.stop()
+        await asyncio.wait_for(run, timeout=5)
+
+
+async def test_a_fresh_worker_does_not_stack_on_an_occurrence_left_waiting(
+    redis, make_app
+):
+    queue = "cron_coalesce_fresh"
+    app = make_app(queue, concurrency=1, poll_block_ms=50, cron_poll_s=0.05)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    @app.task()
+    async def hold():
+        started.set()
+        await finish.wait()
+
+    @app.cron(every=3600, coalesce=True)
+    async def hourly():
+        pass
+
+    schedule = app._crons["hourly"][0]
+    last = schedule.previous_before(schedule.next_after(int(time.time() * 1000)))
+    await hold.enqueue()
+    await app._enqueue_cron("hourly", last, None)  # left by a worker that died
+    run = asyncio.ensure_future(app.run())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.sleep(0.3)
+        assert await _waiting_occurrences(redis, queue) == 1
+    finally:
+        finish.set()
+        app.stop()
+        await asyncio.wait_for(run, timeout=5)

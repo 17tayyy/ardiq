@@ -82,11 +82,13 @@ def cron(
     backoff_ms: int = 0,
     timeout: float | None = None,
     priority: str | None = None,
+    coalesce: bool = False,
 ) -> Callable[..., Task]
 ```
 
 Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds or a
-`timedelta`).
+`timedelta`). With `coalesce=True`, an occurrence is skipped while the previous one is
+still waiting to start; see [Busy workers](/guides/recurring/#busy-workers).
 
 ### Methods
 

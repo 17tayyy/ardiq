@@ -514,7 +514,9 @@ async def heartbeat():
 ```
 
 Recurring tasks fire while a worker is running, and each occurrence is an ordinary
-task with its own result, status, retries and timeout. The cron syntax is the
+task with its own result, status, retries and timeout. A busy worker queues each
+occurrence as it comes due; pass `coalesce=True` to skip an occurrence while the
+previous one still waits to start, so a polling task runs once instead of catching up. The cron syntax is the
 common subset — `*`, lists `,`, ranges `a-b`, and steps `*/n` — at minute
 resolution; use `every=` for sub-minute schedules.
 

@@ -88,6 +88,29 @@ async def hourly_cleanup():
     ...
 ```
 
+## Busy workers
+
+A worker that is up but busy still enqueues every occurrence when it comes due. If its
+slots stay taken longer than one period, the occurrences queue up behind the running
+work and then run back to back once a slot frees.
+
+For a task that only cares about the latest state, such as polling for new data, a
+health check or an analysis of the last hour, the older occurrences are wasted work. Pass
+`coalesce=True` and an occurrence is skipped while the previous one is still waiting to
+start:
+
+```python
+@app.cron(every=timedelta(minutes=10), coalesce=True)
+async def discover() -> int:
+    ...
+```
+
+The occurrence that is waiting runs once a slot frees, and the schedule picks up again
+from the next fire time after that. At most one occurrence waits, and the periods
+skipped in between never run, as when the worker is down. An occurrence waiting for a
+retry counts as waiting too. A running one does not, so the next occurrence can queue
+behind it.
+
 ## How it works
 
 Each due occurrence is enqueued as an ordinary job with a deterministic id
