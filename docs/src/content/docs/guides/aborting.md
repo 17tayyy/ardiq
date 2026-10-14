@@ -72,9 +72,11 @@ Cancellation is `asyncio` cancellation, so it reaches a task at its next `await`
 - **Sync tasks** run in a thread (see [Defining tasks](/guides/tasks/)), and Python can't
   interrupt a running thread. The worker stops waiting and reports the task aborted, but
   the function itself runs to completion.
+- **Sync tasks with `executor="process"`** run in a process of their own, which an abort
+  terminates (see [Running a task in its own process](/guides/tasks/#running-a-task-in-its-own-process)).
 
-If you need a sync task to stop early, have it check a flag of your own between chunks of
-work.
+If you need a sync task in a thread to stop early, have it check a flag of your own
+between chunks of work, or give it a process of its own.
 
 ## App-level access
 

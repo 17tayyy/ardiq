@@ -41,8 +41,55 @@ def resize_image(path: str) -> str:      # runs in a thread
 :::tip
 Write I/O-bound work as `async def` and CPU- or library-bound blocking work as plain `def`.
 Either way, keep in mind the GIL: CPU-heavy work is serial per worker — scale out with more
-workers.
+workers, or run the task in a process of its own.
 :::
+
+## Running a task in its own process
+
+A thread shares the worker's memory and can't be stopped from outside. For heavy sync
+work, such as processing a large image with GDAL or numpy, pass `executor="process"`:
+
+```python
+@app.task(executor="process", timeout=45 * 60)
+def process_scene(scene_id: str) -> dict:
+    ...
+```
+
+Each run then starts a fresh Python process that imports the task's module, calls the
+function and exits:
+
+- **A timeout or an abort stops it.** The process is terminated, and killed if it does
+  not exit within 5 seconds, instead of running on after the worker gave up.
+- **Its memory goes back to the system** when it exits, so allocator arenas and library
+  caches from one run don't stay in the worker for the next.
+- **It doesn't share the worker's GIL**, so CPU-bound work runs alongside the worker's
+  other tasks.
+- **Its logs reach the worker.** Records it emits are handled by the worker's logging, so
+  they come out with the same format and level as everything else.
+- **It dies with the worker.** If the worker is killed outright, the process notices and
+  exits within a second or so.
+
+Arguments and the return value cross between the processes by pickle, so they must
+pickle: anything that came through the serializer does. An exception raised in the task
+comes back as itself, with the child's traceback in a note, and follows the usual retry
+rules; `Retry` works as in a thread. If the process dies without an answer, for example
+because the system killed it for running out of memory, the attempt fails with
+`ChildProcessError` and its exit code.
+
+Middleware, error hooks, retries and metrics still run in the worker. Inside the task,
+`current_task()` works, but `app.state` is empty: the [lifespan](/guides/lifespan/) runs
+in the worker, not in each process, so open what the task needs inside it.
+
+Starting a process costs an interpreter start plus importing the task's module, from a
+fraction of a second up to a couple with heavy libraries. That is nothing next to a task
+that runs for minutes, and too much for one that runs for milliseconds: keep short tasks
+in the default `executor="thread"`.
+
+The task must be a module-level `def`: the process imports it by name. An `async def`, a
+lambda or a nested function is refused when you register it. If you start the worker
+from your own script rather than `ardiq run`, guard the start with
+`if __name__ == "__main__":`, as with any `multiprocessing` code, since each process
+imports that script again.
 
 ## Decorator options
 
@@ -55,6 +102,7 @@ workers.
 | `backoff_ms`  | `int`         | `0`     | Delay between retries in ms. `0` uses the core's default backoff. |
 | `timeout`     | `float \| None` | `None` | Per-task timeout in **seconds**. A task that exceeds it fails (and may retry). |
 | `priority`    | `str \| None` | `None`  | Default priority lane for this task (see [Priorities](#priorities)). |
+| `executor`    | `"thread" \| "process"` | `"thread"` | Where a sync task runs (see [Running a task in its own process](#running-a-task-in-its-own-process)). |
 
 ```python
 @app.task(name="email.welcome", max_retries=5, backoff_ms=2000, timeout=30)
@@ -138,6 +186,10 @@ async def call_flaky_api() -> dict:
 ```
 
 The failed result's `value` reads `timed out after 10s`.
+
+A sync task in a thread can't be interrupted: the attempt fails on time, but the function
+runs on in its thread until it returns. If it must actually stop, give it
+[a process of its own](#running-a-task-in-its-own-process).
 
 ## Priorities
 

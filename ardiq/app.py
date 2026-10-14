@@ -24,7 +24,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from datetime import timedelta, tzinfo
 from importlib.metadata import version
-from typing import Any, cast, overload
+from typing import Any, Literal, cast, overload
 
 from ardiq._core import ArdiqCore
 from ardiq.codec import _default_dumps, _default_loads
@@ -44,6 +44,7 @@ from ardiq.models import (
     TaskMetrics,
     TaskResult,
 )
+from ardiq.process import locate, run_in_process
 from ardiq.tasks import Job, PreparedTask, Task
 
 # Outcome codes for the Rust core's executor protocol. DEAD is a failure the
@@ -54,6 +55,7 @@ DEFAULT_MAX_RETRIES = 3
 _CRON_OUTCOMES = {SUCCESS: "succeeded", ABORT: "aborted"}
 _WAITING = ("queued", "scheduled")  # a retry waits in the delayed set too
 
+Executor = Literal["thread", "process"]
 ErrorHook = Callable[[ErrorContext], Any]
 EnqueueHook = Callable[[EnqueueContext], Any]
 Middleware = Callable[[ExecutionContext, Callable[[], Awaitable[Any]]], Awaitable[Any]]
@@ -83,6 +85,7 @@ class _Registered:
     backoff_ms: int
     is_async: bool
     timeout: float | None  # seconds; None = no timeout
+    process: tuple[str, str] | None = None  # (module, qualname) to run it apart
 
 
 class Ardiq:
@@ -252,6 +255,7 @@ class Ardiq:
         timeout: float | None = ...,
         priority: str | None = ...,
         unique: bool = ...,
+        executor: Executor = ...,
     ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
     def task[**P, R](
@@ -264,13 +268,17 @@ class Ardiq:
         timeout: float | None = None,
         priority: str | None = None,
         unique: bool = False,
+        executor: Executor = "thread",
     ) -> Any:
-        """Register a function as a task. Returns a `Task` you can `.enqueue`."""
+        """Register a function as a task. Returns a `Task` you can `.enqueue`.
+
+        A sync function runs in a thread, or with `executor="process"` in a child
+        process of its own, which a timeout or an abort can stop."""
         self._check_priority(priority)
 
         def wrap(fn: Callable[P, R]) -> Task[P, R]:
             task_name = self._register(
-                name, fn, "task", max_retries, backoff_ms, timeout
+                name, fn, "task", max_retries, backoff_ms, timeout, executor
             )
             return Task(self, task_name, fn, priority, unique)
 
@@ -288,6 +296,7 @@ class Ardiq:
         priority: str | None = None,
         coalesce: bool = False,
         tz: str | tzinfo | None = None,
+        executor: Executor = "thread",
     ) -> Callable[[Callable[P, R]], Task[P, R]]:
         """Register a recurring task. Pass a 5-field cron `spec` or an `every=`
         interval (timedelta or seconds). It fires while a worker runs.
@@ -302,7 +311,7 @@ class Ardiq:
 
         def wrap(fn: Callable[P, R]) -> Task[P, R]:
             task_name = self._register(
-                name, fn, "cron", max_retries, backoff_ms, timeout
+                name, fn, "cron", max_retries, backoff_ms, timeout, executor
             )
             self._crons[task_name] = (schedule, priority, coalesce)
             return Task(self, task_name, fn, priority)
@@ -317,11 +326,22 @@ class Ardiq:
         max_retries: int,
         backoff_ms: int,
         timeout: float | None,
+        executor: Executor = "thread",
     ) -> str:
         """Put a task in the registry, refusing to shadow one already there."""
         task_name = name or getattr(fn, "__name__", None)
         if task_name is None:
             raise TypeError(f"@{decorator} needs an explicit name for this callable")
+        is_async = inspect.iscoroutinefunction(fn)
+        if executor not in ("thread", "process"):
+            raise ValueError(
+                f"executor must be 'thread' or 'process', got {executor!r}"
+            )
+        if executor == "process" and is_async:
+            raise TypeError(
+                f'executor="process" runs sync functions; {task_name!r} is async'
+            )
+        process = locate(fn) if executor == "process" else None
         existing = self._registry.get(task_name)
         if existing is not None:
             owner = getattr(existing.fn, "__module__", "?")
@@ -331,7 +351,7 @@ class Ardiq:
                 "it, or give one an explicit name= in the decorator."
             )
         self._registry[task_name] = _Registered(
-            fn, max_retries, backoff_ms, inspect.iscoroutinefunction(fn), timeout
+            fn, max_retries, backoff_ms, is_async, timeout, process
         )
         return task_name
 
@@ -677,6 +697,9 @@ class Ardiq:
         async def call_task() -> Any:
             if reg.is_async:
                 coro = reg.fn(*data["a"], **data["k"])
+            elif reg.process is not None:
+                context = TaskContext(task_id, task_name, tries)
+                coro = run_in_process(reg.process, data["a"], data["k"], context)
             else:
                 coro = asyncio.to_thread(reg.fn, *data["a"], **data["k"])
             if reg.timeout is not None:

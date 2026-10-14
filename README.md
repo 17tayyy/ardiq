@@ -70,7 +70,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - **At-least-once delivery**: a task is acknowledged only after it terminates, so in-flight work on a dead worker is reclaimed (`XAUTOCLAIM`) and rerun, never dropped
 - **Results** with TTL, plus task **status** (`queued` / `running` / `complete` / `not_found`)
 - **Abort/cancel** (`job.abort()`): drops queued tasks and cancels running ones over pub/sub
-- **Sync & async tasks**: blocking sync functions run in a thread pool
+- **Sync & async tasks**: blocking sync functions run in a thread pool, or in a process of their own (`executor="process"`) that a timeout or an abort can stop
 - **CLI worker** (`ardiq run module:app`) and **burst mode** (drain the queue and exit)
 - **Graceful shutdown**: on SIGTERM a worker finishes what it is running and hands prefetched tasks straight back, so a rolling deploy delays nothing
 - **Testing mode** (`ardiq.testing.inline`): tasks run on enqueue, no Redis or worker needed
@@ -494,7 +494,8 @@ still honored under burst, just not mid-flight.
 
 Because cancellation is `asyncio` cancellation, a **sync** task can't be
 interrupted mid-call — the worker stops waiting on it and reports it aborted,
-but the thread runs to completion. Async tasks are cancelled at their next
+but the thread runs to completion. Give it `executor="process"` and it runs in a
+process of its own, which an abort terminates. Async tasks are cancelled at their next
 `await`, so a task that swallows `CancelledError` keeps going.
 
 ## Recurring tasks

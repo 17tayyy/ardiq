@@ -57,6 +57,7 @@ def task(
     timeout: float | None = None,
     priority: str | None = None,
     unique: bool = False,
+    executor: Literal["thread", "process"] = "thread",
 ) -> Task
 ```
 
@@ -66,6 +67,11 @@ Usable bare (`@app.task`) or called (`@app.task(max_retries=5)`). See
 With `unique=True`, enqueuing a call identical to one already waiting or running
 returns that job instead of creating a second one. See
 [Unique tasks](/guides/enqueuing/#unique-tasks).
+
+A sync task runs in a thread by default. With `executor="process"` it runs in a fresh
+process of its own, which a timeout or an abort can stop; see
+[Running a task in its own process](/guides/tasks/#running-a-task-in-its-own-process).
+`@app.cron` takes `executor` too.
 
 ### `cron(...)`
 
