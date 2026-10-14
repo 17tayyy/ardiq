@@ -624,10 +624,10 @@ what to open an issue about first. Questions, ideas and "is this supposed to
 work like this?" go in
 [Discussions](https://github.com/17tayyy/ardiq/discussions).
 
-If you want something bigger to sink your teeth into, 1.2 is about the things
-only a Rust scheduler can do. Weighted fair scheduling across lanes and
-per-task metrics from the core are in; next are `ardiq workers`, `ardiq queues`
-and a Prometheus endpoint.
+If you want something bigger to sink your teeth into, the next piece is a
+Prometheus endpoint. The Rust core already counts outcomes and run and wait
+times per task and lane (`app.metrics()`), and exporting them is what lets an
+autoscaler such as KEDA scale workers on them.
 
 ## License
 
