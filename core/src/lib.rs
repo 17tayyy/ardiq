@@ -756,14 +756,18 @@ fn to_py_err(err: redis::RedisError) -> PyErr {
 /// (subsequent calls are no-ops once a global subscriber is set).
 #[pyfunction]
 fn init_logging(verbose: bool) {
+    use std::io::IsTerminal;
     use tracing_subscriber::fmt;
     use tracing_subscriber::EnvFilter;
 
     let level = if verbose { "debug" } else { "info" };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    // Same rule as the banner: colour only a terminal, and never under NO_COLOR.
+    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     let _ = fmt::Subscriber::builder()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal() && !no_color)
         .try_init(); // no-op if already initialized
 }
 

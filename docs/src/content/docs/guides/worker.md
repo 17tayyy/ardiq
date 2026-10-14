@@ -116,7 +116,8 @@ asyncio.run(main())
 
 `ardiq run` configures Python's `logging` for the process — `INFO` by default, `DEBUG`
 with `--verbose` — and initializes the Rust core's logging at the same level, so both
-surface on stderr.
+surface on stderr. The banner and the core's lines are coloured only on a terminal and
+never when `NO_COLOR` is set, so logs collected by Docker, systemd or CI stay plain text.
 
 | Level | What you see |
 |---|---|

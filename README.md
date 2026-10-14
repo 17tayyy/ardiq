@@ -556,7 +556,8 @@ with `--verbose`/`-v`) and also initializes the Rust core's own logging at the s
 level. Worker lifecycle (`worker starting`, `worker stopped`) logs at `INFO`; task
 lifecycle logs at `DEBUG` (`task started`, `task succeeded`) through `WARN` (`task
 retry scheduled`) and `ERROR` (`task failed`, `task unknown`). Task args, kwargs,
-and results are never logged.
+and results are never logged. Colour is used only on a terminal and never when
+`NO_COLOR` is set, so logs collected by Docker, systemd or CI stay plain text.
 
 Logging inside a task is just standard `logging` — it works the same for async tasks
 and for sync tasks run via `asyncio.to_thread`:
