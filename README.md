@@ -55,7 +55,7 @@ as 81,636 against Streaq's 27,433; the other four await one round trip per task.
 - 🦀 **Rust core**: the loop and Redis I/O run on tokio, off the GIL
 - **Priority queues**: higher-priority tasks are consumed first, or lanes share the worker by weight so a busy one cannot starve the rest
 - **Delayed & scheduled** tasks (`delay_ms` / `schedule_ms`)
-- **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC) or `every=` intervals
+- **Cron & recurring** tasks (`@app.cron`): 5-field cron (UTC or a time zone) or `every=` intervals
 - **Automatic retries** with quadratic backoff, configurable per task, or on demand (`raise Retry`)
 - **Enqueue by name** (`app.send("task", ...)`): producers never import the task module
 - **Dead letter queue** (`ardiq dlq list` / `replay`): a task that fails for good is kept, with its arguments, until you replay or delete it
@@ -500,7 +500,8 @@ but the thread runs to completion. Async tasks are cancelled at their next
 ## Recurring tasks
 
 Register a task to run on a schedule with `@app.cron` — either a standard 5-field
-cron expression (evaluated in **UTC**) or a fixed `every=` interval:
+cron expression (evaluated in **UTC**, or in the zone you pass as `tz`) or a fixed
+`every=` interval:
 
 ```python
 @app.cron("0 3 * * *")            # daily at 03:00 UTC
@@ -510,6 +511,11 @@ async def nightly_report():
 
 @app.cron(every=30)               # every 30s — int/float seconds or a timedelta
 async def heartbeat():
+    ...
+
+
+@app.cron("0 10,22 * * *", tz="Europe/Madrid")  # 10:00 and 22:00 Madrid, all year
+async def digest():
     ...
 ```
 

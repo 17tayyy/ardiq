@@ -1,13 +1,14 @@
 ---
 title: Recurring tasks
-description: Run tasks on a schedule with @app.cron — standard cron expressions (UTC) or fixed every= intervals.
+description: Run tasks on a schedule with @app.cron — standard cron expressions, in UTC or a time zone, or fixed every= intervals.
 head:
   - tag: title
     content: Cron and recurring tasks in Python — ArdiQ
 ---
 
 Register a task to run repeatedly with `@app.cron`. Give it either a standard 5-field
-**cron expression** (evaluated in UTC) or a fixed **`every=` interval**:
+**cron expression** (evaluated in UTC, or in the [time zone](#time-zones) you pass) or a
+fixed **`every=` interval**:
 
 ```python
 from datetime import timedelta
@@ -37,7 +38,7 @@ enqueued by hand) plus a schedule. Recurring tasks **fire while a worker is runn
 ## Cron expressions
 
 The cron string has the standard five fields — **minute hour day-of-month month
-day-of-week** — evaluated in **UTC**:
+day-of-week** — evaluated in **UTC** unless you pass a [time zone](#time-zones):
 
 ```
 ┌───────────── minute        (0–59)
@@ -63,6 +64,40 @@ async def business_hours_sync():
 ArdiQ ships a small, dependency-free cron parser covering the common subset above. It
 does **not** support `L`, `#`, `@yearly`-style nicknames, named months/days, or seconds.
 For sub-minute schedules, use `every=`.
+:::
+
+## Time zones
+
+A schedule people read, such as a digest at 10:00 and 22:00 Madrid time, drifts by an
+hour twice a year if it is written in UTC. Pass `tz` and the expression is read on that
+zone's wall clock:
+
+```python
+@app.cron("0 10,22 * * *", tz="Europe/Madrid")
+async def digest():
+    ...
+```
+
+`tz` takes an IANA name or any `tzinfo`. Fire times are still stored in UTC, and
+`ardiq status` shows them in UTC.
+
+The two daylight saving changes of the year need a rule, and ArdiQ follows cron's:
+
+- **A rate follows real time.** An expression with `*` in the minute or hour field, such
+  as `*/10 * * * *` or `0 * * * *`, keeps its interval through both changes. When the
+  clocks go back it fires through the repeated hour as usual.
+- **A time of day fires once a day.** An expression with a fixed minute and hour, such as
+  `30 2 * * *`, fires at the first 02:30 when the clocks go back, not at the second. When
+  the clocks go forward and 02:30 never happens, it fires as the gap ends, at 03:00, so
+  a daily task is never skipped.
+
+`every=` intervals take no time zone: they count real time.
+
+:::note[Windows]
+`tz` names are looked up in the system's time zone database. Windows has none, so on
+Windows ArdiQ installs the `tzdata` package for it. On a Linux image that ships without
+one, such as a bare Alpine, `@app.cron` raises at registration and tells you to install
+`tzdata`.
 :::
 
 ## Intervals

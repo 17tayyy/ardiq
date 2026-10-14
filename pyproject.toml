@@ -22,6 +22,8 @@ classifiers = [
 ]
 dependencies = [
     "msgpack>=1.1.2",
+    # zoneinfo reads the OS time zone database, which Windows does not ship.
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

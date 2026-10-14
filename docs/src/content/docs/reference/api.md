@@ -83,11 +83,13 @@ def cron(
     timeout: float | None = None,
     priority: str | None = None,
     coalesce: bool = False,
+    tz: str | tzinfo | None = None,
 ) -> Callable[..., Task]
 ```
 
-Pass exactly one of `spec` (a 5-field cron expression, UTC) or `every` (seconds or a
-`timedelta`). With `coalesce=True`, an occurrence is skipped while the previous one is
+Pass exactly one of `spec` (a 5-field cron expression) or `every` (seconds or a
+`timedelta`). `spec` is read in UTC, or on the wall clock of `tz` (an IANA name or a
+`tzinfo`); see [Time zones](/guides/recurring/#time-zones). With `coalesce=True`, an occurrence is skipped while the previous one is
 still waiting to start; see [Busy workers](/guides/recurring/#busy-workers).
 
 ### Methods

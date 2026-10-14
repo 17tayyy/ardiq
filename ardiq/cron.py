@@ -1,13 +1,15 @@
 """Recurring schedules: a lean 5-field cron parser and fixed intervals.
 
 Both forms collapse to ``next_after(now_ms) -> ms`` — the next fire strictly
-after a given moment. Cron expressions are evaluated in UTC.
+after a given moment. Cron expressions are evaluated in UTC, or on the wall
+clock of a time zone.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _interval_ms(every: timedelta | float) -> int:
@@ -56,6 +58,7 @@ class _CronSpec:
     dows: frozenset[int]
     dom_restricted: bool
     dow_restricted: bool
+    fixed: bool  # no `*` in the minute or hour: a time of day, not a rate
 
 
 def _parse_cron(expr: str) -> _CronSpec:
@@ -75,6 +78,7 @@ def _parse_cron(expr: str) -> _CronSpec:
         dows=frozenset(d % 7 for d in _parse_field(dow, 0, 7)),  # 7 → Sunday
         dom_restricted=dom != "*",
         dow_restricted=dow != "*",
+        fixed=not (minute.startswith("*") or hour.startswith("*")),
     )
 
 
@@ -90,56 +94,103 @@ def _cron_matches(spec: _CronSpec, dt: datetime) -> bool:
     return dom_ok and dow_ok
 
 
-def _cron_next(spec: _CronSpec, after_ms: int) -> int:
-    """First fire time (epoch ms, UTC) strictly after `after_ms`."""
+def _fires_at(spec: _CronSpec, zone: tzinfo | None, dt: datetime) -> bool:
+    """Whether `spec` fires at the UTC minute `dt`, read on `zone`'s wall clock."""
+    if zone is None:
+        return _cron_matches(spec, dt)
+    local = dt.astimezone(zone)
+    if not spec.fixed:
+        return _cron_matches(spec, local)  # a rate follows real time across DST
+    # A time of day fires once per date: not again when fall back repeats it
+    # (fold=1), and at the end of the gap when spring forward skips it.
+    if local.fold == 0 and _cron_matches(spec, local):
+        return True
+    wall = local.replace(tzinfo=None)
+    skipped = (dt - timedelta(minutes=1)).astimezone(zone).replace(tzinfo=None)
+    skipped += timedelta(minutes=1)
+    while skipped < wall:
+        if _cron_matches(spec, skipped):
+            return True
+        skipped += timedelta(minutes=1)
+    return False
+
+
+def _cron_next(spec: _CronSpec, after_ms: int, zone: tzinfo | None = None) -> int:
+    """First fire time (epoch ms) strictly after `after_ms`."""
     start = datetime.fromtimestamp(after_ms / 1000, UTC)
     dt = start.replace(second=0, microsecond=0) + timedelta(minutes=1)
     limit = dt + timedelta(days=366 * 5)
     while dt <= limit:
-        if _cron_matches(spec, dt):
+        if _fires_at(spec, zone, dt):
             return round(dt.timestamp() * 1000)
         dt += timedelta(minutes=1)
     raise ValueError("cron expression never matches within 5 years")
 
 
-def _cron_prev(spec: _CronSpec, before_ms: int) -> int:
-    """Last fire time (epoch ms, UTC) strictly before `before_ms`."""
+def _cron_prev(spec: _CronSpec, before_ms: int, zone: tzinfo | None = None) -> int:
+    """Last fire time (epoch ms) strictly before `before_ms`."""
     dt = datetime.fromtimestamp(before_ms / 1000, UTC).replace(second=0, microsecond=0)
     if dt.timestamp() * 1000 >= before_ms:  # on a minute boundary
         dt -= timedelta(minutes=1)
     limit = dt - timedelta(days=366 * 5)
     while dt >= limit:
-        if _cron_matches(spec, dt):
+        if _fires_at(spec, zone, dt):
             return round(dt.timestamp() * 1000)
         dt -= timedelta(minutes=1)
     raise ValueError("cron expression never matched within 5 years")
 
 
+def _zone(tz: str | tzinfo) -> tzinfo:
+    if not isinstance(tz, str):
+        return tz
+    try:
+        return ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(
+            f"unknown time zone {tz!r}. If it is a valid IANA name, this system "
+            "has no time zone database: pip install tzdata"
+        ) from None
+
+
 class _Schedule:
     """A recurring schedule: the next fire time after a given moment (epoch ms)."""
 
-    __slots__ = ("_cron", "_interval_ms")
+    __slots__ = ("_cron", "_interval_ms", "_last", "_zone")
 
     def __init__(
-        self, *, every: timedelta | float | None = None, cron: str | None = None
+        self,
+        *,
+        every: timedelta | float | None = None,
+        cron: str | None = None,
+        tz: str | tzinfo | None = None,
     ):
         if (every is None) == (cron is None):
             raise TypeError("@cron needs exactly one of `spec` or `every`")
+        if tz is not None and every is not None:
+            raise TypeError("tz applies to a cron spec; an every= interval has none")
         self._interval_ms: int | None = (
             _interval_ms(every) if every is not None else None
         )
         self._cron: _CronSpec | None = _parse_cron(cron) if cron is not None else None
+        self._zone: tzinfo | None = _zone(tz) if tz is not None else None
+        self._last: tuple[int, int] | None = None  # (asked at, answer)
 
     def next_after(self, now_ms: int) -> int:
-        if self._cron is not None:
-            return _cron_next(self._cron, now_ms)
-        assert self._interval_ms is not None
-        ms = self._interval_ms
-        return ((now_ms // ms) + 1) * ms
+        if self._cron is None:
+            assert self._interval_ms is not None
+            ms = self._interval_ms
+            return ((now_ms // ms) + 1) * ms
+        # The scheduler asks every second, and a yearly cron is a long scan:
+        # any moment before the answer has the same answer.
+        if self._last is not None and self._last[0] <= now_ms < self._last[1]:
+            return self._last[1]
+        fire = _cron_next(self._cron, now_ms, self._zone)
+        self._last = (now_ms, fire)
+        return fire
 
     def previous_before(self, fire_ms: int) -> int:
         if self._cron is not None:
-            return _cron_prev(self._cron, fire_ms)
+            return _cron_prev(self._cron, fire_ms, self._zone)
         assert self._interval_ms is not None
         ms = self._interval_ms
         return ((fire_ms - 1) // ms) * ms

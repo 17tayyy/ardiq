@@ -22,7 +22,7 @@ from collections.abc import (
     Mapping,
 )
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, tzinfo
 from importlib.metadata import version
 from typing import Any, cast, overload
 
@@ -278,13 +278,17 @@ class Ardiq:
         timeout: float | None = None,
         priority: str | None = None,
         coalesce: bool = False,
+        tz: str | tzinfo | None = None,
     ) -> Callable[[Callable[P, R]], Task[P, R]]:
-        """Register a recurring task. Pass a 5-field cron `spec` (UTC) or an
-        `every=` interval (timedelta or seconds). It fires while a worker runs.
+        """Register a recurring task. Pass a 5-field cron `spec` or an `every=`
+        interval (timedelta or seconds). It fires while a worker runs.
+
+        `spec` is read in UTC, or on the wall clock of `tz` (an IANA name such as
+        "Europe/Madrid", or a tzinfo).
 
         With `coalesce=True`, an occurrence is skipped while the previous one is
         still waiting to start, so a busy worker runs one instead of a backlog."""
-        schedule = _Schedule(every=every, cron=spec)
+        schedule = _Schedule(every=every, cron=spec, tz=tz)
         self._check_priority(priority)
 
         def wrap(fn: Callable[P, R]) -> Task[P, R]:

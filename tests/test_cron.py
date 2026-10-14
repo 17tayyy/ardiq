@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -244,3 +244,83 @@ async def test_a_fresh_worker_does_not_stack_on_an_occurrence_left_waiting(
         finish.set()
         app.stop()
         await asyncio.wait_for(run, timeout=5)
+
+
+MADRID = "Europe/Madrid"  # 2026: CET to CEST on Mar 29, back on Oct 25, at 01:00 UTC
+
+
+def test_a_cron_in_a_time_zone_follows_its_wall_clock():
+    s = _Schedule(cron="0 10,22 * * *", tz=MADRID)
+    assert s.next_after(_ms(2026, 7, 1, 0, 0)) == _ms(2026, 7, 1, 8, 0)  # UTC+2
+    assert s.next_after(_ms(2026, 12, 1, 0, 0)) == _ms(2026, 12, 1, 9, 0)  # UTC+1
+
+
+def test_a_time_skipped_by_spring_forward_fires_when_the_gap_ends():
+    s = _Schedule(cron="30 2 * * *", tz=MADRID)
+    # 02:30 does not exist on Mar 29: it runs at 03:00 local instead.
+    assert s.next_after(_ms(2026, 3, 28, 12, 0)) == _ms(2026, 3, 29, 1, 0)
+    assert s.next_after(_ms(2026, 3, 29, 1, 0)) == _ms(2026, 3, 30, 0, 30)
+    assert s.previous_before(_ms(2026, 3, 30, 0, 30)) == _ms(2026, 3, 29, 1, 0)
+
+
+def test_a_time_repeated_by_fall_back_fires_once():
+    s = _Schedule(cron="30 2 * * *", tz=MADRID)
+    # 02:30 happens twice on Oct 25; only the first one fires.
+    assert s.next_after(_ms(2026, 10, 24, 12, 0)) == _ms(2026, 10, 25, 0, 30)
+    assert s.next_after(_ms(2026, 10, 25, 0, 30)) == _ms(2026, 10, 26, 1, 30)
+    assert s.previous_before(_ms(2026, 10, 26, 1, 30)) == _ms(2026, 10, 25, 0, 30)
+
+
+def _fires(s: _Schedule, after: int, n: int) -> list[int]:
+    fires = []
+    for _ in range(n):
+        after = s.next_after(after)
+        fires.append(after)
+    return fires
+
+
+def test_a_rate_follows_real_time_across_dst():
+    s = _Schedule(cron="*/30 * * * *", tz=MADRID)
+    # Fall back: local 02:00 and 02:30 come twice, and so do the fires.
+    assert _fires(s, _ms(2026, 10, 24, 23, 59), 4) == [
+        _ms(2026, 10, 25, 0, 0),
+        _ms(2026, 10, 25, 0, 30),
+        _ms(2026, 10, 25, 1, 0),
+        _ms(2026, 10, 25, 1, 30),
+    ]
+    # Spring forward: half an hour of real time after 01:30 local is 03:00.
+    assert _fires(s, _ms(2026, 3, 29, 0, 15), 2) == [
+        _ms(2026, 3, 29, 0, 30),
+        _ms(2026, 3, 29, 1, 0),
+    ]
+
+
+def test_tz_takes_a_tzinfo_and_refuses_bad_input():
+    india = timezone(timedelta(hours=5, minutes=30))
+    s = _Schedule(cron="0 9 * * *", tz=india)
+    assert s.next_after(_ms(2026, 1, 1, 0, 0)) == _ms(2026, 1, 1, 3, 30)
+    with pytest.raises(TypeError, match="tz applies to a cron spec"):
+        _Schedule(every=60, tz=MADRID)
+    with pytest.raises(ValueError, match="pip install tzdata"):
+        _Schedule(cron="0 9 * * *", tz="Europe/Atlantis")
+
+
+def test_next_after_reuses_its_answer_only_before_it():
+    s = _Schedule(cron="0 * * * *")
+    assert s.next_after(_ms(2026, 6, 13, 10, 30)) == _ms(2026, 6, 13, 11, 0)
+    assert s.next_after(_ms(2026, 6, 13, 10, 59)) == _ms(2026, 6, 13, 11, 0)
+    assert s.next_after(_ms(2026, 6, 13, 9, 30)) == _ms(2026, 6, 13, 10, 0)
+    assert s.next_after(_ms(2026, 6, 13, 11, 0)) == _ms(2026, 6, 13, 12, 0)
+
+
+def test_app_cron_takes_a_time_zone(make_app):
+    app = make_app("cron_tz")
+
+    @app.cron("0 10 * * *", tz=MADRID)
+    async def digest():
+        pass
+
+    schedule = app._crons["digest"][0]
+    assert schedule.next_after(_ms(2026, 7, 1, 0, 0)) == _ms(2026, 7, 1, 8, 0)
+    with pytest.raises(ValueError, match="unknown time zone"):
+        app.cron("0 10 * * *", tz="Mars/Olympus")
