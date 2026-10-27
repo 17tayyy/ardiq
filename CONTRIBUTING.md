@@ -38,7 +38,7 @@ uv run ty check ardiq tests
 uv run pytest
 ```
 
-CI runs the same four on Python 3.12 and 3.13.
+CI runs the same four on Python 3.12, 3.13 and 3.14.
 
 ## How the project is laid out
 
