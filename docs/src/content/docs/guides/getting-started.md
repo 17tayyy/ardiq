@@ -5,7 +5,7 @@ description: Install ArdiQ, start Redis, write your first task, and run a worker
 
 ## Requirements
 
-- **Python 3.12+** (3.13+ recommended — see the note below)
+- **Python 3.12+** — tested on 3.12, 3.13 and 3.14 (3.13+ recommended — see the note below)
 - A **Redis** server, 6.2 or newer (ArdiQ uses Redis streams as its broker and result store).
 
 :::caution[On Python 3.12, a process that enqueues can crash as it exits]
@@ -17,7 +17,7 @@ this can happen; only the exit code is wrong.
 
 It needs many processes exiting at once to show up at all (measured: 12% of 100
 simultaneous producers, never once when run one at a time), and **Python 3.13
-and up are unaffected** — CPython gained the check that PyO3 needs to refuse the
+and up, including 3.14, are unaffected** — CPython gained the check that PyO3 needs to refuse the
 unsafe release. The `ardiq` worker command is not affected on any version: it
 exits without finalizing the interpreter, precisely because of this.
 
