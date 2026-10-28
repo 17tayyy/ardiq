@@ -67,33 +67,25 @@ async def test_the_id_is_the_same_in_another_process(make_app):
 
 
 async def test_a_finished_unique_task_runs_again_with_no_stale_result(redis, make_app):
+    app = make_app("uniqagain", burst=True, poll_block_ms=100)
     runs: list[str] = []
 
-    def worker():
-        # A burst worker cancels itself on the way out, so the second run needs
-        # its own app — same queue, same task.
-        app = make_app("uniqagain", burst=True, poll_block_ms=100)
+    @app.task(unique=True)
+    async def sync_inbox(user: str):
+        runs.append(user)
+        return len(runs)
 
-        @app.task(unique=True)
-        async def sync_inbox(user: str):
-            runs.append(user)
-            return len(runs)
-
-        return app, sync_inbox
-
-    first, sync_inbox = worker()
     job = await sync_inbox.enqueue("ada")
-    await asyncio.wait_for(first.run(), timeout=30)
+    await asyncio.wait_for(app.run(), timeout=30)
     assert (await job.result()).value == 1
 
-    second, sync_inbox = worker()
     again = await sync_inbox.enqueue("ada")
     assert again.id == job.id
     # The previous run's result must not answer for this one: it hasn't run yet.
     assert await again.result() is None
     assert await again.status() == "queued"
 
-    await asyncio.wait_for(second.run(), timeout=30)
+    await asyncio.wait_for(app.run(), timeout=30)
     assert runs == ["ada", "ada"]
     assert (await again.result()).value == 2
 

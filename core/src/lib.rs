@@ -3,7 +3,7 @@ mod queue;
 mod worker;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
@@ -132,7 +132,8 @@ struct ArdiqCore {
     queue: Arc<Queue>,
     metrics: Arc<Metrics>,
     config: WorkerConfig,
-    cancel: CancellationToken,
+    // Each run gets a child of this, so a burst drain ends only its own run.
+    cancel: Arc<Mutex<CancellationToken>>,
     conn: Arc<OnceCell<ConnectionManager>>,
     aborts: Arc<OnceCell<async_channel::Receiver<String>>>,
 }
@@ -228,7 +229,7 @@ impl ArdiqCore {
             queue,
             metrics: Arc::new(Metrics::default()),
             config: worker_config,
-            cancel: CancellationToken::new(),
+            cancel: Arc::new(Mutex::new(CancellationToken::new())),
             conn: Arc::new(OnceCell::new()),
             aborts: Arc::new(OnceCell::new()),
         })
@@ -348,16 +349,25 @@ impl ArdiqCore {
             self.metrics.clone(),
             config,
             executor,
-            self.cancel.clone(),
+            self.cancel.lock().unwrap().child_token(),
         );
+        let cancel = self.cancel.clone();
         future_into_py(py, async move {
-            worker.run().await.map_err(to_py_err)?;
+            let outcome = worker.run().await;
+            // A stop ends the run it reached, not every run after it.
+            {
+                let mut current = cancel.lock().unwrap();
+                if current.is_cancelled() {
+                    *current = CancellationToken::new();
+                }
+            }
+            outcome.map_err(to_py_err)?;
             Ok(())
         })
     }
 
     fn stop(&self) {
-        self.cancel.cancel();
+        self.cancel.lock().unwrap().cancel();
     }
 
     fn metrics(&self) -> Vec<TaskSnapshot> {
