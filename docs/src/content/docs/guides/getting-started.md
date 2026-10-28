@@ -40,10 +40,15 @@ below, and one runtime dependency (`msgpack`).
 You also need a Redis server — the quickest way is Docker:
 
 ```console
-$ docker run -d --name ardiq-redis -p 6379:6379 redis   # Redis on localhost:6379
+$ docker run -d --name ardiq-redis -p 127.0.0.1:6379:6379 redis   # Redis on localhost:6379
 ```
 
 or install it from your package manager (or [redis.io](https://redis.io)).
+
+The `127.0.0.1:` prefix keeps Redis on your machine. Without it Docker publishes the
+port on every network interface, and the image has no password, so anyone on your
+network could read and write the queue. Anywhere beyond local development, set a
+password with `--requirepass` and put it in the URL (`redis://:secret@host:6379/0`).
 
 :::note[Building from source]
 If you want to hack on ArdiQ itself you'll need [Rust](https://rustup.rs) and

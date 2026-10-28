@@ -161,10 +161,13 @@ the CLI or from your own code (`await app.run()`).
 You also need a Redis server, 6.2 or newer. The quickest way is Docker:
 
 ```console
-$ docker run -d --name ardiq-redis -p 6379:6379 redis
+$ docker run -d --name ardiq-redis -p 127.0.0.1:6379:6379 redis
 ```
 
-or install it from your package manager (or [redis.io](https://redis.io)).
+or install it from your package manager (or [redis.io](https://redis.io)). The
+`127.0.0.1:` keeps that Redis off your network, since the image has no password;
+anywhere beyond local development, set one with `--requirepass` and put it in the
+URL (`redis://:secret@host:6379/0`).
 
 > **Building from source** (if you want to hack on ArdiQ itself): you'll need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/). Clone the repo and run `uv sync`.
 
