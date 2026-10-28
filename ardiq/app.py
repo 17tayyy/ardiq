@@ -486,7 +486,7 @@ class Ardiq:
                     task.delay_ms,
                     task.schedule_ms,
                     task.expire_ms,
-                    task.unique,
+                    task.unique or bool(task.task_id),
                 )
             )
             jobs.append(Job(self, job_id))
@@ -523,7 +523,8 @@ class Ardiq:
             delay_ms,
             schedule_ms,
             expire_ms,
-            unique,
+            # A reused id starts a fresh run, so the last run's result must go.
+            unique or bool(task_id),
         )
         return Job(self, job_id)
 

@@ -205,6 +205,12 @@ same id won't create a duplicate job.
 await sync_account.options(task_id=f"sync:{account_id}").enqueue(account_id)
 ```
 
+That holds while the task exists: from enqueue until it finishes, retries included. An
+enqueue in that window hands back the `Job` already there and its arguments are ignored.
+Once the task has finished, the same id can be enqueued again and starts a fresh run, as
+with [unique tasks](#unique-tasks): the previous result is dropped, so `status()` and
+`result()` answer for the new run, not the old one.
+
 ### Expiry
 
 `expire_ms` drops a job that has been waiting too long to start — useful for work that's
