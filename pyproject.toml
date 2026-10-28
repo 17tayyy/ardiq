@@ -22,7 +22,7 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
-    "msgpack>=1.1.2",
+    "msgpack>=1.2.3",
     # zoneinfo reads the OS time zone database, which Windows does not ship.
     "tzdata>=2025.2; sys_platform == 'win32'",
 ]
