@@ -28,4 +28,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: docs
+          # The action's default (3.90.0) silently drops [limits].
+          wranglerVersion: "4.155.0"
           command: deploy
