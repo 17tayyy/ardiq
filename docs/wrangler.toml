@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 [assets]
 directory = "./dist"
 
-# Per-request cap so a bug can't burn unbounded CPU on the paid plan.
+# Static assets run no script and bill no CPU; this caps a script if one is added.
 [limits]
 cpu_ms = 50
 subrequests = 50
